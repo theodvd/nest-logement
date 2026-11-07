@@ -1,0 +1,309 @@
+<title>Rejeu nest</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  /* Palette : bleu émaillé des plaques de rue parisiennes, vert de leur liseré. */
+  :root {
+    --fond: #f5f6f8;
+    --surface: #ffffff;
+    --encre: #16203a;
+    --doux: #5b6478;
+    --trait: #dde1e8;
+    --plaque: #1f3a6b;
+    --plaque-texte: #ffffff;
+    --liseré: #2f7d5b;
+    --bon: #2f7d5b;
+    --moyen: #b7791f;
+    --faible: #b5473a;
+    --barre: #c4cce0;
+    --barre-active: #1f3a6b;
+    --display: "Bricolage Grotesque", "Avenir Next", system-ui, sans-serif;
+    --texte: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --fond: #0f1420; --surface: #171e2e; --encre: #e7ebf3; --doux: #98a2b8;
+      --trait: #2a3348; --plaque: #3f64a8; --liseré: #4cae86; --bon: #4cae86;
+      --moyen: #e0a548; --faible: #e2735f; --barre: #34405c; --barre-active: #7ea2e6;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --fond: #0f1420; --surface: #171e2e; --encre: #e7ebf3; --doux: #98a2b8;
+    --trait: #2a3348; --plaque: #3f64a8; --liseré: #4cae86; --bon: #4cae86;
+    --moyen: #e0a548; --faible: #e2735f; --barre: #34405c; --barre-active: #7ea2e6;
+  }
+
+  * { box-sizing: border-box; }
+  body { background: var(--fond); color: var(--encre); font-family: var(--texte); font-size: 15px; line-height: 1.5; }
+  .page { max-width: 980px; margin: 0 auto; padding-inline: 16px; padding-block: 28px 64px; display: grid; gap: 36px; }
+
+  header { display: grid; gap: 14px; }
+  .plaque {
+    justify-self: start; background: var(--plaque); color: var(--plaque-texte);
+    border: 3px solid var(--plaque-texte); outline: 3px solid var(--liseré); border-radius: 8px;
+    padding: 6px 16px; font-family: var(--display); font-weight: 700; letter-spacing: .04em; font-size: 14px;
+  }
+  h1 { font-family: var(--display); font-weight: 700; font-size: clamp(28px, 5vw, 42px); line-height: 1.1; margin: 0; text-wrap: balance; }
+  .chapeau { color: var(--doux); max-width: 64ch; margin: 0; }
+
+  .entonnoir { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1px; background: var(--trait); border: 1px solid var(--trait); border-radius: 10px; overflow: hidden; }
+  .etape { background: var(--surface); padding: 14px 16px; display: grid; gap: 2px; }
+  .etape b { font-family: var(--mono); font-size: 26px; font-weight: 500; font-variant-numeric: tabular-nums; }
+  .etape span { color: var(--doux); font-size: 13px; }
+  .etape.cle b { color: var(--plaque); }
+
+  h2 { font-family: var(--display); font-weight: 500; font-size: 22px; margin: 0 0 4px; }
+  .note { color: var(--doux); font-size: 13px; margin: 0; }
+
+  .reglage { background: var(--surface); border: 1px solid var(--trait); border-radius: 10px; padding: 18px; display: grid; gap: 16px; }
+  .curseur { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
+  .curseur label { font-weight: 600; }
+  .curseur input { flex: 1 1 220px; accent-color: var(--plaque); }
+  .valeurs { display: flex; flex-wrap: wrap; gap: 8px 28px; font-size: 14px; }
+  .valeurs b { font-family: var(--mono); font-size: 20px; font-weight: 500; font-variant-numeric: tabular-nums; }
+  .histo { overflow-x: auto; }
+  .histo svg { display: block; width: 100%; min-width: 520px; height: auto; }
+  .histo text { fill: var(--doux); font-family: var(--mono); font-size: 11px; }
+
+  .raisons { display: grid; gap: 6px; font-size: 14px; }
+  .raison { display: grid; grid-template-columns: minmax(0, 1fr) 60px; gap: 12px; align-items: center; }
+  .raison i { display: block; height: 8px; background: var(--barre); border-radius: 4px; }
+  .raison em { font-style: normal; font-family: var(--mono); text-align: right; font-variant-numeric: tabular-nums; }
+
+  .filtres { display: flex; flex-wrap: wrap; gap: 8px; }
+  .filtres button {
+    font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--trait); background: var(--surface); color: var(--encre);
+  }
+  .filtres button[aria-pressed="true"] { background: var(--plaque); color: var(--plaque-texte); border-color: var(--plaque); }
+  button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--liseré); outline-offset: 2px; }
+
+  .liste { display: grid; gap: 12px; }
+  .notif { background: var(--surface); border: 1px solid var(--trait); border-radius: 14px; padding: 14px 16px; display: grid; gap: 8px; }
+  .notif.sous { opacity: .55; }
+  .ligne1 { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+  .score { font-family: var(--mono); font-weight: 500; font-size: 15px; padding: 2px 8px; border-radius: 6px; color: #fff; font-variant-numeric: tabular-nums; }
+  .titre { font-weight: 600; }
+  .quand { color: var(--doux); font-size: 13px; margin-left: auto; font-family: var(--mono); }
+  .resume { margin: 0; }
+  .trajet { color: var(--doux); font-size: 14px; margin: 0; }
+  .points { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; font-size: 14px; }
+  .points .ok::before { content: "✓ "; color: var(--bon); font-weight: 600; }
+  .points .ko::before { content: "△ "; color: var(--moyen); font-weight: 600; }
+  .points .alerte::before { content: "⚑ "; color: var(--faible); font-weight: 600; }
+  details summary { cursor: pointer; color: var(--plaque); font-size: 14px; font-weight: 500; }
+  .detail { display: grid; gap: 14px; padding-top: 10px; }
+  .grille { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  td, th { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--trait); vertical-align: top; }
+  th { color: var(--doux); font-weight: 500; }
+  td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .jauge { display: inline-block; width: 48px; height: 6px; border-radius: 3px; background: var(--barre); vertical-align: middle; position: relative; overflow: hidden; }
+  .jauge i { position: absolute; inset: 0 auto 0 0; background: var(--barre-active); }
+  .message { background: var(--fond); border: 1px solid var(--trait); border-radius: 8px; padding: 12px; white-space: pre-wrap; font-size: 14px; margin: 0; }
+  .actions { display: flex; gap: 14px; flex-wrap: wrap; font-size: 14px; }
+  .actions a, .actions button { color: var(--plaque); font: inherit; background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+  .plus { justify-self: center; font: inherit; padding: 10px 18px; border-radius: 999px; border: 1px solid var(--trait); background: var(--surface); color: var(--encre); cursor: pointer; }
+  footer { color: var(--doux); font-size: 13px; }
+  @media (prefers-reduced-motion: no-preference) { .notif { transition: opacity .2s; } }
+</style>
+
+<div class="page">
+  <header>
+    <div class="plaque">NEST · REJEU</div>
+    <h1 id="titre">Ce que tu aurais reçu ce dernier mois</h1>
+    <p class="chapeau" id="chapeau"></p>
+    <div class="entonnoir" id="entonnoir"></div>
+  </header>
+
+  <section class="reglage" aria-labelledby="t-seuil">
+    <div>
+      <h2 id="t-seuil">Seuil de notification</h2>
+      <p class="note">Déplace le curseur : le volume de notifs et la liste se recalculent.</p>
+    </div>
+    <div class="curseur">
+      <label for="seuil">Notifier à partir de <span id="seuil-val"></span>/100</label>
+      <input type="range" id="seuil" min="30" max="90" step="1">
+    </div>
+    <div class="valeurs" id="valeurs"></div>
+    <div class="histo" id="histo"></div>
+  </section>
+
+  <section aria-labelledby="t-raisons">
+    <h2 id="t-raisons">Pourquoi les autres ont été écartées</h2>
+    <p class="note">Avant tout appel à Claude : filtres gratuits puis vrai trajet Google.</p>
+    <div class="raisons" id="raisons" style="margin-top:12px"></div>
+  </section>
+
+  <section aria-labelledby="t-liste" style="display:grid; gap:14px">
+    <div>
+      <h2 id="t-liste">Les notifs, de la meilleure à la moins bonne</h2>
+      <p class="note">En grisé : sous le seuil, tu ne les aurais pas reçues.</p>
+    </div>
+    <div class="filtres" id="filtres" role="group" aria-label="Filtrer par type"></div>
+    <div class="liste" id="liste"></div>
+    <button class="plus" id="plus" type="button">Afficher 30 de plus</button>
+  </section>
+
+  <footer id="pied"></footer>
+</div>
+
+<script>
+const D = __DATA__;
+
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => n.toLocaleString("fr-FR");
+const couleurScore = (s) => s >= 75 ? "var(--bon)" : s >= 60 ? "var(--plaque)" : s >= 45 ? "var(--moyen)" : "var(--faible)";
+const annonces = D.annonces;
+const jours = D.jours;
+let seuil = D.seuil, filtre = "tout", affichees = 30;
+
+// --- En-tête et entonnoir ---
+const st = D.statuts;
+const total = Object.values(st).reduce((a, b) => a + b, 0);
+$("chapeau").textContent =
+  `Rejeu des annonces Leboncoin publiées du ${D.debut} au ${D.fin} (studios, T1 et colocations à ${D.budget} € CC max autour de ${D.lieu}), passées dans le pipeline complet avec ton profil de ${D.nb_criteres} critères.`;
+const etapes = [
+  [total, "annonces publiées"],
+  [total - (st.ecartee || 0), "passent filtres et trajet"],
+  [annonces.length, "jugées par Claude"],
+];
+$("entonnoir").innerHTML = etapes.map(([n, l]) => `<div class="etape"><b>${fmt(n)}</b><span>${l}</span></div>`).join("")
+  + `<div class="etape cle"><b id="n-notifs"></b><span>notifs au seuil choisi</span></div>`;
+
+// --- Raisons d'écart ---
+const raisons = Object.entries(D.raisons_ecart);
+const maxR = Math.max(...raisons.map(r => r[1]));
+$("raisons").innerHTML = raisons.map(([r, n]) =>
+  `<div class="raison"><div><div>${r}</div><i style="width:${(n / maxR * 100).toFixed(1)}%"></i></div><em>${fmt(n)}</em></div>`).join("");
+
+// --- Histogramme des scores (pas de 5) ---
+function histo() {
+  const bacs = Array.from({ length: 20 }, (_, i) => ({ min: i * 5, n: 0 }));
+  annonces.forEach(a => bacs[Math.min(19, Math.floor(a.score / 5))].n++);
+  const W = 640, H = 170, g = 28, b = 22, max = Math.max(...bacs.map(x => x.n), 1);
+  const bw = (W - g - 8) / 20;
+  const y = (n) => H - b - (n / max) * (H - b - 12);
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Répartition des scores">`;
+  [0, Math.round(max / 2), max].forEach(v => {
+    s += `<line x1="${g}" x2="${W - 8}" y1="${y(v)}" y2="${y(v)}" stroke="var(--trait)" />`;
+    s += `<text x="${g - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
+  });
+  bacs.forEach((x, i) => {
+    const actif = x.min + 5 > seuil;
+    s += `<rect x="${g + i * bw + 1}" y="${y(x.n)}" width="${bw - 2}" height="${H - b - y(x.n)}" rx="2" fill="${actif ? "var(--barre-active)" : "var(--barre)"}" />`;
+    if (i % 2 === 0) s += `<text x="${g + i * bw + bw / 2}" y="${H - 6}" text-anchor="middle">${x.min}</text>`;
+  });
+  const xs = g + (seuil / 5) * bw;
+  s += `<line x1="${xs}" x2="${xs}" y1="6" y2="${H - b}" stroke="var(--faible)" stroke-width="2" stroke-dasharray="4 3" />`;
+  s += `</svg>`;
+  $("histo").innerHTML = s;
+}
+
+// --- Chiffres au seuil ---
+function valeurs() {
+  const au = annonces.filter(a => a.score >= seuil);
+  const studios = au.filter(a => a.annonce.type_bien === "studio_t1").length;
+  $("seuil-val").textContent = seuil;
+  $("n-notifs").textContent = fmt(au.length);
+  $("valeurs").innerHTML = [
+    [au.length, "notifs sur la période"],
+    [(au.length / jours).toFixed(1).replace(".", ","), "par jour en moyenne"],
+    [studios, "studios ou T1"],
+    [au.length - studios, "colocations"],
+  ].map(([n, l]) => `<div><b>${n}</b> ${l}</div>`).join("");
+}
+
+// --- Filtres ---
+const FILTRES = [["tout", "Tout"], ["studio_t1", "Studios et T1"], ["colocation", "Colocations"], ["marche", "Accessible à pied"]];
+$("filtres").innerHTML = FILTRES.map(([k, l]) => `<button type="button" data-f="${k}" aria-pressed="${k === filtre}">${l}</button>`).join("");
+$("filtres").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  filtre = b.dataset.f; affichees = 30;
+  $("filtres").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b));
+  liste();
+});
+function garde(a) {
+  if (filtre === "tout") return true;
+  if (filtre === "marche") return a.trajet.mode === "marche";
+  return a.annonce.type_bien === filtre;
+}
+
+// --- Cartes façon notification ---
+function ligneTrajet(t, precise) {
+  const approx = precise ? "" : "≈";
+  if (t.mode === "marche") return `${approx}${t.minutes_marche} min à pied (compte comme ${t.minutes} min)`;
+  if (t.mode === "moto") return `${approx}${t.minutes_moto} min en moto (parking), ${t.minutes_transports} min en transports`;
+  const m = [`${approx}${t.minutes} min`];
+  if (t.station) m.push(`${t.station} à ${t.marche_station_min} min à pied`);
+  if (t.lignes && t.lignes.length) m.push(t.lignes.join(" › "));
+  if (t.changements != null) m.push(t.changements === 0 ? "direct" : `${t.changements} changement${t.changements > 1 ? "s" : ""}`);
+  return m.join(" · ");
+}
+function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+function carte(a, i) {
+  const an = a.annonce, v = a.verdict;
+  const parPoids = [...a.lignes].sort((x, y) => y.poids - x.poids);
+  const ok = parPoids.filter(l => l.satisfaction >= .75).slice(0, 4);
+  const ko = parPoids.filter(l => l.satisfaction <= .25 && l.poids >= 2).slice(0, 4);
+  const surf = an.surface_m2 ? `${Math.round(an.surface_m2)} m² · ` : "";
+  const sous = a.score < seuil ? " sous" : "";
+  return `<article class="notif${sous}">
+    <div class="ligne1">
+      <span class="score" style="background:${couleurScore(a.score)}">${a.score}</span>
+      <span class="titre">${surf}${Math.round(an.loyer_cc)} € CC · ${a.trajet.minutes} min</span>
+      <span class="quand">${a.publiee.slice(8, 10)}/${a.publiee.slice(5, 7)}</span>
+    </div>
+    <p class="resume">${esc(v.resume)}</p>
+    <p class="trajet">${esc(ligneTrajet(a.trajet, an.position_precise))}${an.position_precise ? "" : " · position approximative"}</p>
+    <ul class="points">
+      ${ok.map(l => `<li class="ok">${esc(l.libelle)}</li>`).join("")}
+      ${ko.map(l => `<li class="ko">${esc(l.libelle)}${l.preuve && l.preuve !== "inconnu" ? ` (${esc(l.preuve)})` : ""}</li>`).join("")}
+      ${v.alertes.map(x => `<li class="alerte">${esc(x)}</li>`).join("")}
+    </ul>
+    <details>
+      <summary>Détail des ${a.lignes.length} critères et message proposé</summary>
+      <div class="detail">
+        <div class="grille"><table>
+          <thead><tr><th>Critère</th><th>Poids</th><th>Satisfaction</th><th>Preuve</th></tr></thead>
+          <tbody>${parPoids.map(l => `<tr><td>${esc(l.libelle)}</td><td class="n">${l.poids}</td>
+            <td class="n"><span class="jauge"><i style="width:${l.satisfaction * 100}%"></i></span> ${Math.round(l.satisfaction * 100)} %</td>
+            <td>${esc(l.preuve)}</td></tr>`).join("")}</tbody>
+        </table></div>
+        <pre class="message" id="msg-${i}">${esc(v.message)}</pre>
+        <div class="actions">
+          <a href="https://www.leboncoin.fr/reply/${esc(an.id_source)}" target="_blank" rel="noopener" data-ecrire="msg-${i}">Copier le message et écrire au bailleur</a>
+          <button type="button" data-copie="msg-${i}">Copier seulement</button>
+          <a href="${esc(an.url)}" target="_blank" rel="noopener">Voir l'annonce</a>
+        </div>
+      </div>
+    </details>
+  </article>`;
+}
+function liste() {
+  const vis = annonces.filter(garde);
+  $("liste").innerHTML = vis.slice(0, affichees).map(carte).join("") || `<p class="note">Aucune annonce pour ce filtre.</p>`;
+  $("plus").hidden = vis.length <= affichees;
+}
+$("plus").addEventListener("click", () => { affichees += 30; liste(); });
+$("liste").addEventListener("click", async (e) => {
+  // Lien « écrire » : on copie sans bloquer l'ouverture de l'annonce.
+  const lien = e.target.closest("[data-ecrire]");
+  if (lien) { navigator.clipboard.writeText($(lien.dataset.ecrire).textContent).catch(() => {}); return; }
+  const b = e.target.closest("[data-copie]"); if (!b) return;
+  const el = $(b.dataset.copie);
+  try { await navigator.clipboard.writeText(el.textContent); b.textContent = "Copié"; }
+  catch { const r = document.createRange(); r.selectNodeContents(el); const s = getSelection(); s.removeAllRanges(); s.addRange(r); b.textContent = "Texte sélectionné"; }
+  setTimeout(() => (b.textContent = "Copier seulement"), 1800);
+});
+
+$("seuil").value = seuil;
+$("seuil").addEventListener("input", (e) => { seuil = +e.target.value; valeurs(); histo(); liste(); });
+$("pied").textContent = `Généré le ${D.genere_le.replace("T", " à ")} · coût Claude du rejeu : ${D.cout_total_usd.toFixed(2).replace(".", ",")} $ · Score = moyenne pondérée des critères sur 100, un critère inconnu compte comme neutre.`;
+
+valeurs(); histo(); liste();
+</script>

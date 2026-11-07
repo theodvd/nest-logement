@@ -1,0 +1,9 @@
+# Données personnelles : jamais dans git.
+profil.yaml
+.env
+.env.local
+data/
+rapport/rejeu.html
+# Environnement Python.
+.venv/
+__pycache__/

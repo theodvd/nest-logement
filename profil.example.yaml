@@ -1,0 +1,190 @@
+# Profil de recherche : la seule source de vérité de nest (aucun critère n'est en dur dans le code).
+# Exemple FICTIF. Le vrai profil s'appelle profil.yaml (ignoré par git) : l'entretien
+# /entretien-recherche le rédige pour toi dans Claude Code, ou copie ce fichier et adapte-le.
+
+recherche:
+  ville: Paris                # libellé de la zone, repris dans les consignes données à Claude
+  bureaux:                    # le lieu de stage ou de travail (destination de chaque trajet)
+    nom: Lieu de stage        # jamais cité dans les messages (voir locataire.nommer_employeur)
+    adresse: "Place de la République, 75011 Paris"
+    lat: 48.86754             # python -m nest.geocoder "adresse" donne lat et lng
+    lng: 2.36396
+    arrivee: "09:00"          # heure d'arrivée visée, un mardi (trajet en transports)
+    depart: "08:30"           # heure de départ (sert seulement au trajet moto)
+  # centre: {lat: 48.8566, lng: 2.3522}   # centre des cartes OpenStreetMap ; par défaut, les bureaux
+  trajet_max_min: 40          # SEUL critère éliminatoire, porte à porte
+  marge_position_floue_min: 8 # tolérance quand l'annonce ne donne que le centre de la commune
+  budget_max_cc: 900          # charges comprises
+  types: [studio_t1, colocation]   # studio_t1 et/ou colocation ; ordre = priorité
+  entree_souhaitee: "janvier 2027"
+  rayon_recherche_km: 15      # zone interrogée sur les sites, avant calcul du vrai trajet
+  distance_max_vol_oiseau_km: 12   # pré-filtre gratuit avant d'appeler Google
+  poids_minute_marche: 1      # 1 = neutre ; 0.67 si 30 min à pied valent 20 min de métro pour toi
+  marche_max_km: 3.6          # au-delà, la marche ne peut pas gagner : pas d'appel Google
+  moto: false                 # true : trajet moto calculé quand l'annonce mentionne un parking
+  dispo_au_plus_tot: "2026-12"     # dispo explicite avant ce mois = pas jugée (sans date = jugée)
+  duree_min_mois: 6           # location limitée à moins que ça = éliminée (durée du stage)
+  anciennete_max_h: 48        # ignore les vieilles annonces remontées par le sponsoring
+
+# Portrait de 5 à 8 lignes : Claude le lit pour juger chaque annonce.
+preferences: |
+  Camille arrive à Paris en janvier 2027 pour un stage de 6 mois. Elle part vers 8 h 30,
+  rentre vers 19 h et travaille parfois le soir sur son ordinateur : il lui faut un coin
+  bureau. Elle a mal vécu un studio sur un boulevard bruyant : le calme la nuit compte.
+  Studio ou T1 de préférence ; une colocation calme et organisée lui va aussi.
+  Elle préfère du meublé (elle arrive avec deux valises) et un vrai bail pour toucher l'APL.
+
+# Ce qui sert à rédiger le premier message au bailleur.
+locataire:
+  prenom: Camille
+  age: 22
+  situation: "étudiante en dernière année d'école d'ingénieurs"
+  emploi: "stage de fin d'études de 6 mois à Paris à partir de janvier 2027 ; gratification de 1 400 € par mois"
+  garanties: "garantie Visale (garantie gratuite de l'État)"
+  arrivee: "janvier 2027"
+  nommer_employeur: false     # false : « mon lieu de stage » suffit, l'entreprise n'est jamais nommée
+  ne_jamais_mentionner: []    # sujets à taire dans les messages, ex. ["mon chat"]
+  # Exemple de ton et de mise en forme : Claude s'en inspire sans le recopier.
+  modele_message: |
+    Bonjour,
+
+    Je suis intéressée par votre logement. J'arrive à Paris en janvier pour mon stage de fin
+    d'études, qui dure six mois. Le logement est proche de mon lieu de stage.
+
+    Ma gratification est de 1 400 € par mois et je bénéficie de la garantie Visale.
+
+    Le logement est-il toujours disponible ? Je serais ravie de le visiter.
+
+    Bonne journée,
+    Camille
+
+# Critères pondérés. poids : 1 petit plus · 2 apprécié · 3 important · 4 très important · 5 essentiel
+# Score = 100 × Σ(poids × satisfaction) / Σ(poids) ; règles dans nest/scoring.py.
+# Deux sortes de critères :
+# - `consigne` : Claude répond oui / partiel / non / inconnu en lisant l'annonce ;
+# - `auto` : mesuré par le code, satisfaction interpolée entre `paliers` {valeur: satisfaction}.
+#   Types auto : trajet_min, changements, surface_m2, loyer_cc, distance_km (avec `point`),
+#   parc (square à ~5 min, OpenStreetMap), escalade_km (salle de bloc la plus proche),
+#   vendeur_particulier, compte_fiable (ancienneté du compte en mois, identité vérifiée).
+# `applique_a: [colocation]` limite un critère à un type de bien.
+criteres:
+  # --- Trajet ---
+  - id: trajet_court
+    libelle: Trajet court
+    famille: trajet
+    poids: 5
+    pourquoi: "Le trajet quotidien pèse sur six mois de stage."
+    auto: trajet_min
+    paliers: {15: 1, 25: 0.8, 35: 0.4, 45: 0}
+  - id: direct
+    libelle: Trajet direct
+    famille: trajet
+    poids: 2
+    pourquoi: "Un changement de moins, c'est moins de retards."
+    auto: changements
+    paliers: {0: 1, 1: 0.5, 2: 0}
+
+  # --- Logement ---
+  - id: surface
+    libelle: Surface
+    famille: logement
+    poids: 3
+    pourquoi: "Il faut la place d'un coin bureau."
+    applique_a: [studio_t1]     # en colocation, la surface affichée est souvent celle de tout l'appartement
+    auto: surface_m2
+    paliers: {9: 0, 14: 0.5, 20: 0.9, 25: 1}
+  - id: studio
+    libelle: Studio ou T1
+    famille: logement
+    poids: 3
+    pourquoi: "La colocation reste possible, mais en second choix."
+    consigne: "oui si studio ou T1 pour une personne seule ; non si chambre en colocation."
+  - id: meuble
+    libelle: Meublé
+    famille: logement
+    poids: 3
+    pourquoi: "Arrive avec deux valises."
+    consigne: "Attribut meublé ; sinon indices dans la description."
+  - id: calme_nuit
+    libelle: Calme la nuit
+    famille: logement
+    poids: 3
+    pourquoi: "A mal dormi dans un studio sur boulevard."
+    consigne: "oui si sur cour, rue calme ou étage élevé ; non si bar en bas, boulevard, rez-de-chaussée sur rue ; inconnu si rien n'est dit."
+  - id: coin_bureau
+    libelle: Coin bureau
+    famille: logement
+    poids: 2
+    pourquoi: "Travaille parfois le soir."
+    consigne: "oui si bureau ou table de travail mentionnés ; inconnu sinon."
+  - id: machine_a_laver
+    libelle: Machine à laver
+    famille: logement
+    poids: 1
+    pourquoi: "Bonus."
+    consigne: "Lave-linge dans le logement (ou buanderie dans l'immeuble = partiel)."
+  - id: lumineux
+    libelle: Lumineux
+    famille: logement
+    poids: 1
+    pourquoi: "Bonus."
+    consigne: "Lumineux, traversant, grandes fenêtres ; non si sombre ou rez-de-chaussée sur cour étroite."
+
+  # --- Budget et annonceur ---
+  - id: loyer
+    libelle: Loyer bas
+    famille: budget
+    poids: 4
+    pourquoi: "La gratification couvre tout juste le loyer et la vie courante."
+    auto: loyer_cc
+    paliers: {600: 1, 900: 0.2}
+  - id: particulier
+    libelle: Particulier
+    famille: vendeur
+    poids: 2
+    pourquoi: "Pas de frais d'agence."
+    auto: vendeur_particulier
+  - id: compte_fiable
+    libelle: Compte fiable
+    famille: vendeur
+    poids: 3
+    pourquoi: "Les fausses agences ont des comptes de quelques mois ; identité vérifiée = parfait."
+    auto: compte_fiable
+    paliers: {6: 0, 12: 0.4, 36: 0.8, 60: 1}
+
+  # --- Bail ---
+  - id: dispo_janvier
+    libelle: Dispo en janvier
+    famille: bail
+    poids: 3
+    pourquoi: "Entrée en janvier ; décembre possible pour un logement vraiment bien."
+    consigne: "oui si dispo en janvier 2027 ; partiel si décembre 2026 ou date négociable ; non si dispo immédiate sans souplesse ; inconnu si non précisé."
+  - id: bail_classique
+    libelle: Vrai bail
+    famille: bail
+    poids: 2
+    pourquoi: "Un vrai bail ouvre droit à l'APL."
+    consigne: "oui si bail classique (meublé 1 an ou vide) ; partiel si bail mobilité ; non si sous-location ou location non déclarée."
+
+  # --- Colocation seulement ---
+  - id: coloc_organisee
+    libelle: Colocs organisés
+    famille: logement
+    poids: 3
+    pourquoi: "Une colocation, oui, mais calme et bien tenue."
+    applique_a: [colocation]
+    consigne: "oui si règles de vie, planning ménage, ménage inclus (coliving) ; non si signaux de désordre ; inconnu sinon."
+
+# Marques ou plateformes vers lesquelles des escrocs redirigent : toute annonce qui les cite est écartée.
+arnaques:
+  marques: []
+
+notif:
+  score_min: 70               # sous ce score (sur 100), pas de notif
+  max_jugements_par_passage: 15   # garde-fou de coût Claude
+  page_ecrire: null           # URL de ta page pont « copier et écrire » (voir ecrire/), sinon null
+
+# Tri des mails d'agence (facultatif, seulement si Gmail est autorisé). Lecture seule.
+mails:
+  fenetre_jours: 3            # mails relus à chaque passage (déjà triés = ignorés)
+  max_classements_par_passage: 10   # garde-fou de coût Claude

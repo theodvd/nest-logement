@@ -1,0 +1,8 @@
+lbc>=1.1.8   # 1.1.8 retire les profils Chrome Android bloqués par DataDome (01/11)
+anthropic>=1.0
+pydantic>=2
+pyyaml
+requests
+google-auth-oauthlib
+google-api-python-client
+curl_cffi>=0.16   # Gens de Confiance : imite Chrome face à Cloudflare
