@@ -74,8 +74,8 @@ Keys you will be asked for:
 
 ## Monthly cost
 
-Estimated from the author's own instance, running in production since October 2026 (Paris, studios
-and flatshares up to 1,100 € including charges, 15 km around the workplace):
+Estimated from a real instance running since October 2026, on a big-city search for studios and
+flatshares:
 
 | | Volume | Cost |
 |---|---|---|
@@ -83,8 +83,8 @@ and flatshares up to 1,100 € including charges, 15 km around the workplace):
 | Google Routes | about 150 route calls per day, about 4,500 per month (transit and walking are "Essentials", free up to 10,000 per month; the optional motorbike mode uses "Pro", free up to 5,000) | **$0** |
 | ntfy, OpenStreetMap | | **$0** |
 
-Paris is the busiest rental market in France: a smaller city or a tighter budget means fewer
-listings, so fewer judgments and a smaller bill. Two settings cap the spend: listings are
+A big city means many listings; a smaller city or a tighter budget means fewer listings, so fewer
+judgments and a smaller bill. Two settings cap the spend: listings are
 filtered for free before Claude sees them, and `notif.max_jugements_par_passage` (15 by default)
 limits judgments per run. Prices checked on 7 November 2026: Claude Sonnet 5 at $2 / $10 per
 million input / output tokens; [Google Maps Platform pricing](https://developers.google.com/maps/billing-and-pricing/pricing).
