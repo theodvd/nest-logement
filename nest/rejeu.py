@@ -208,11 +208,10 @@ def rescorer(profil: dict, score_min: int) -> None:
     """Ajoute le profil vendeur aux annonces jugées, écarte les comptes bloqués et recalcule
     le score avec les critères actuels, sans rappeler Claude (évaluations déjà stockées)."""
     import time
-    import lbc
     from nest import scoring, vendeurs
     from nest.trajet import Trajet
     base = _base()
-    client = lbc.Client()
+    client = leboncoin.nouveau_client()
     lignes = base.cx.execute("SELECT cle, annonce, trajet, environs, lignes FROM rejeu "
                              "WHERE statut='jugee' AND score >= ?", (score_min,)).fetchall()
     log.info("%d annonces à rescorer", len(lignes))

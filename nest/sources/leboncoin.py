@@ -6,6 +6,7 @@ on reste sur un rythme modéré (un passage toutes les 10 minutes au plus).
 """
 
 import logging
+import random
 import time
 
 import lbc
@@ -13,6 +14,20 @@ import lbc
 from nest.annonce import Annonce
 
 log = logging.getLogger(__name__)
+
+# Profils de navigateur imités face à DataDome. lbc 1.1.8 en tire un au hasard parmi 9,
+# mais safari270_ios et firefox154 n'existent pas dans curl_cffi 0.16 : le passage plantait
+# avant même d'appeler Leboncoin, soit l'essentiel des échecs (148 sur 157, constat du 10/11).
+# On impose donc un tirage parmi les 7 profils testés un par un.
+PROFILS_NAVIGATEUR = [
+    "firefox133", "firefox135", "firefox144", "firefox147",
+    "tor145", "safari_ios", "safari_ios_beta",
+]
+
+
+def nouveau_client() -> lbc.Client:
+    """Client lbc avec un profil de navigateur tiré parmi ceux que curl_cffi sait imiter."""
+    return lbc.Client(impersonate=random.choice(PROFILS_NAVIGATEUR))
 
 # Codes Leboncoin du champ "real_estate_type" : 1 = maison, 2 = appartement.
 # Exclut parkings, caves, terrains qui polluent la catégorie "Locations".
@@ -101,7 +116,7 @@ def chercher(profil: dict, pages: int = 1, pause_s: float = 1.5,
         radius=int(recherche["rayon_recherche_km"] * 1000),
         city=recherche["ville"],   # simple libellé : la zone, c'est le rayon autour du lieu de travail
     )
-    client = lbc.Client()
+    client = nouveau_client()
     annonces: list[Annonce] = []
 
     if depuis:
