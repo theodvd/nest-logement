@@ -19,6 +19,8 @@ from datetime import datetime, timedelta
 import lbc
 import requests
 
+from nest.sources.leboncoin import nouveau_client
+
 log = logging.getLogger(__name__)
 
 # Identifiant d'une annonce Gens de Confiance (Leboncoin : un nombre).
@@ -82,7 +84,7 @@ def profil_vendeur(vendeur_id: str | None, base, client: lbc.Client | None = Non
     if ligne and datetime.fromisoformat(ligne[0]) > datetime.now() - timedelta(days=7):
         return json.loads(ligne[1])
     try:
-        u = (client or lbc.Client()).get_user(user_id=vendeur_id)
+        u = (client or nouveau_client()).get_user(user_id=vendeur_id)
     except Exception as err:            # compte supprimé, réseau, anti-bot : profil inconnu
         log.warning("Profil vendeur %s indisponible : %s", vendeur_id, err)
         return {}
@@ -131,7 +133,7 @@ def bloquer(id_annonce: str, base, raison: str = "arnaque signalée") -> str:
     if uuid := RE_UUID.search(id_annonce):
         return _bloquer_gdc(uuid.group(0), base, raison)
     id_annonce = re.sub(r"\D", "", id_annonce.rstrip("/").split("/")[-1])
-    client = lbc.Client()
+    client = nouveau_client()
     ad = client.get_ad(id_annonce)
     vendeur = profil_vendeur(ad._user_id, base, client) or {"id": ad._user_id, "nom": None}
     base.cx.execute("INSERT OR REPLACE INTO bloques (id, nom, raison, bloque_le) VALUES (?, ?, ?, ?)",
