@@ -19,6 +19,18 @@ log = logging.getLogger(__name__)
 # Limite imposée par ntfy : au-delà, la notif est rejetée en 400.
 MAX_BOUTONS = 3
 
+# Au-delà de 4 Ko, Apple jette la notif sans prévenir (commentaire du code de ntfy,
+# server/server_firebase.go) : elle reste visible dans l'app mais ne sonne jamais.
+# Constat du 13/11 : le message au bailleur rallongé le 07/11 a porté les notifs
+# d'annonce à 4,5-5,1 Ko. Marge pour l'enveloppe ajoutée par ntfy (id, date, canal) et
+# la copie du titre et du début du texte qu'Apple affiche dans le bandeau.
+TAILLE_MAX_IPHONE = 3000
+
+
+def _taille(contenu: dict) -> int:
+    """Poids en octets de la notif telle que publiée en JSON."""
+    return len(json.dumps(contenu, ensure_ascii=False).encode())
+
 
 def _ligne_trajet(trajet, position_precise: bool) -> str:
     """Ex. : '22 min · Parmentier à 4 min à pied · M3 › M11 · 1 changement'."""
@@ -83,10 +95,9 @@ def composer(annonce, trajet, verdict, score: int, lignes: list,
     corps += [f"✅ {c}" for c in coche]
     corps += [f"⚠️ {c}" for c in coince]
     corps += [f"🚩 {a}" for a in verdict.alertes]
-    corps += ["", "Message proposé :", verdict.message]
+    message_propose = ["", "Message proposé :", verdict.message]
     ecrire = lien_ecrire(annonce, verdict.message, page_ecrire, canal_signal) if page_ecrire else None
-    if ecrire:
-        corps += ["", f"✉️ Copier le message et écrire au bailleur : {ecrire}"]
+    ligne_ecrire = ["", f"✉️ Copier le message et écrire au bailleur : {ecrire}"] if ecrire else []
 
     itineraire = ("https://www.google.com/maps/dir/?api=1&travelmode=transit"
                   f"&origin={annonce.lat},{annonce.lng}&destination=")
@@ -100,15 +111,27 @@ def composer(annonce, trajet, verdict, score: int, lignes: list,
     # le trajet est déjà détaillé dans le corps de la notif.
     if len(actions) > MAX_BOUTONS:
         actions = [a for a in actions if a["label"] != "Itinéraire"]
-    return {
+    contenu = {
         "title": titre,
-        "message": "\n".join(corps),
+        "message": "\n".join(corps + message_propose + ligne_ecrire),
         "click": ecrire or annonce.url,   # toucher la notif = écrire au bailleur
         "attach": annonce.photos[0] if annonce.photos else None,
         "tags": ["house"],
         "priority": 4 if score >= 80 else 3,
         "actions": actions,
     }
+    # Trop lourde pour l'iPhone : on retire les doublons du lien « écrire », du moins
+    # utile au plus utile. Le toucher de la notif garde toujours le lien.
+    if _taille(contenu) > TAILLE_MAX_IPHONE:
+        contenu["actions"] = [a for a in actions if a["label"] != "Écrire"]
+    if _taille(contenu) > TAILLE_MAX_IPHONE:
+        contenu["message"] = "\n".join(corps + ligne_ecrire)   # la page pont copie le message
+    if _taille(contenu) > TAILLE_MAX_IPHONE:
+        contenu["message"] = "\n".join(corps)
+    if _taille(contenu) > TAILLE_MAX_IPHONE:
+        log.warning("Notif de %d octets malgré l'allègement : l'iPhone risque de ne pas sonner",
+                    _taille(contenu))
+    return contenu
 
 
 def composer_doublon(annonce, original: dict, site: str, site_original: str) -> dict:
