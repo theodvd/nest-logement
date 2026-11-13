@@ -19,17 +19,22 @@ log = logging.getLogger(__name__)
 # Limite imposée par ntfy : au-delà, la notif est rejetée en 400.
 MAX_BOUTONS = 3
 
-# Au-delà de 4 Ko, Apple jette la notif sans prévenir (commentaire du code de ntfy,
-# server/server_firebase.go) : elle reste visible dans l'app mais ne sonne jamais.
-# Constat du 13/11 : le message au bailleur rallongé le 07/11 a porté les notifs
-# d'annonce à 4,5-5,1 Ko. Marge pour l'enveloppe ajoutée par ntfy (id, date, canal) et
-# la copie du titre et du début du texte qu'Apple affiche dans le bandeau.
-TAILLE_MAX_IPHONE = 3000
+# iPhone : ntfy met le contenu deux fois dans le paquet envoyé à Firebase puis Apple et,
+# au-delà de 4 000 octets, ne raccourcit que le texte (server/server_firebase.go) : le reste
+# (lien au toucher, boutons, photo) compte double. Trop lourde, la notif reste visible dans
+# l'app mais ne sonne jamais. Mesuré le 13/11 : les notifs sonnent jusqu'à 2 256
+# (texte + 2 × reste), restent muettes dès 4 759. Plafond avec marge.
+POIDS_MAX_IPHONE = 3200
+# Champs ajoutés par ntfy (id, date, canal, métadonnées de la photo) et adresse des bureaux
+# ajoutée au lien Itinéraire à l'envoi, comptés dans le reste.
+ENVELOPPE_NTFY = 300
 
 
-def _taille(contenu: dict) -> int:
-    """Poids en octets de la notif telle que publiée en JSON."""
-    return len(json.dumps(contenu, ensure_ascii=False).encode())
+def _poids_iphone(contenu: dict) -> int:
+    """Poids de la notif tel que Firebase le mesure : texte + 2 × tout le reste."""
+    texte = len(contenu.get("message", "").encode())
+    reste = {k: v for k, v in contenu.items() if k != "message" and v is not None}
+    return texte + 2 * (len(json.dumps(reste, ensure_ascii=False).encode()) + ENVELOPPE_NTFY)
 
 
 def _ligne_trajet(trajet, position_precise: bool) -> str:
@@ -101,36 +106,33 @@ def composer(annonce, trajet, verdict, score: int, lignes: list,
 
     itineraire = ("https://www.google.com/maps/dir/?api=1&travelmode=transit"
                   f"&origin={annonce.lat},{annonce.lng}&destination=")
-    actions = ([{"action": "view", "label": "Écrire", "url": ecrire}] if ecrire else []) + [
+    actions = [
         {"action": "view", "label": "Annonce", "url": annonce.url},
         {"action": "view", "label": "Itinéraire", "url": itineraire},
     ] + ([{"action": "http", "label": "Arnaque", "method": "POST", "clear": True,
            "url": f"{os.getenv('NTFY_SERVEUR', 'https://ntfy.sh').rstrip('/')}/{canal_signal}",
            "body": f"arnaque {annonce.id_source}"}] if canal_signal else [])
-    # ntfy refuse plus de 3 boutons (erreur 400) : on sacrifie l'itinéraire,
-    # le trajet est déjà détaillé dans le corps de la notif.
-    if len(actions) > MAX_BOUTONS:
-        actions = [a for a in actions if a["label"] != "Itinéraire"]
     contenu = {
         "title": titre,
         "message": "\n".join(corps + message_propose + ligne_ecrire),
-        "click": ecrire or annonce.url,   # toucher la notif = écrire au bailleur
+        # Toucher = l'annonce (choix du 13/11) : le lien « écrire » vit dans le texte, où il
+        # ne compte qu'une fois dans le poids iPhone.
+        "click": annonce.url,
         "attach": annonce.photos[0] if annonce.photos else None,
         "tags": ["house"],
         "priority": 4 if score >= 80 else 3,
         "actions": actions,
     }
-    # Trop lourde pour l'iPhone : on retire les doublons du lien « écrire », du moins
-    # utile au plus utile. Le toucher de la notif garde toujours le lien.
-    if _taille(contenu) > TAILLE_MAX_IPHONE:
-        contenu["actions"] = [a for a in actions if a["label"] != "Écrire"]
-    if _taille(contenu) > TAILLE_MAX_IPHONE:
+    # Trop lourde pour l'iPhone : on retire du moins utile au plus utile.
+    if _poids_iphone(contenu) > POIDS_MAX_IPHONE:
         contenu["message"] = "\n".join(corps + ligne_ecrire)   # la page pont copie le message
-    if _taille(contenu) > TAILLE_MAX_IPHONE:
-        contenu["message"] = "\n".join(corps)
-    if _taille(contenu) > TAILLE_MAX_IPHONE:
-        log.warning("Notif de %d octets malgré l'allègement : l'iPhone risque de ne pas sonner",
-                    _taille(contenu))
+    if _poids_iphone(contenu) > POIDS_MAX_IPHONE:               # trajet déjà dans le texte
+        contenu["actions"] = [a for a in actions if a["label"] != "Itinéraire"]
+    if _poids_iphone(contenu) > POIDS_MAX_IPHONE:
+        contenu["attach"] = None
+    if _poids_iphone(contenu) > POIDS_MAX_IPHONE:
+        log.warning("Notif de poids %d malgré l'allègement : l'iPhone risque de ne pas sonner",
+                    _poids_iphone(contenu))
     return contenu
 
 
@@ -213,7 +215,7 @@ def envoyer(contenu: dict, destination: str | None = None) -> None:
         contenu["actions"] = contenu["actions"][:MAX_BOUTONS]
     # L'adresse des bureaux complète le lien d'itinéraire.
     for action in contenu.get("actions", []):
-        if action["label"] == "Itinéraire":
+        if action["label"] == "Itinéraire" and destination:
             action["url"] += quote(destination)
     rep = requests.post(serveur, json={"topic": topic, **contenu}, timeout=15)
     if rep.status_code == 400:
