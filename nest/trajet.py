@@ -182,7 +182,8 @@ def calculer(annonce, profil: dict, base) -> Trajet:
         return Trajet(minutes=estimation, mode="transports", source="vol_oiseau",
                       minutes_transports=estimation)
 
-    coords = f"{annonce.lat:.4f},{annonce.lng:.4f}"
+    # La position des bureaux fait partie de la clé : corriger l'adresse recalcule les trajets.
+    coords = f"{annonce.lat:.4f},{annonce.lng:.4f}>{bureaux['lat']:.4f},{bureaux['lng']:.4f}"
     infos: dict = {}
     try:
         # Transports (toujours) : en cache par coordonnées.
