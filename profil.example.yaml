@@ -42,6 +42,9 @@ locataire:
   emploi: "stage de fin d'études de 6 mois à Paris à partir de janvier 2027 ; gratification de 1 400 € par mois"
   garanties: "garantie Visale (garantie gratuite de l'État)"
   arrivee: "janvier 2027"
+  # Facultatifs : cités seulement quand une annonce pose la question (vides = jamais cités).
+  criteres_recherche: "je cherche un studio meublé proche de mon lieu de stage"
+  historique_location: "je loue actuellement une chambre en résidence étudiante à Lyon"
   nommer_employeur: false     # false : « mon lieu de stage » suffit, l'entreprise n'est jamais nommée
   ne_jamais_mentionner: []    # sujets à taire dans les messages, ex. ["mon chat"]
   # Exemple de ton et de mise en forme : Claude s'en inspire sans le recopier.

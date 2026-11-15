@@ -100,6 +100,9 @@ def composer(annonce, trajet, verdict, score: int, lignes: list,
     corps += [f"✅ {c}" for c in coche]
     corps += [f"⚠️ {c}" for c in coince]
     corps += [f"🚩 {a}" for a in verdict.alertes]
+    # Dans le corps (jamais retiré pour le poids) : le message peut, lui, sauter.
+    if getattr(verdict, "a_completer", None):
+        corps.append(f"✍️ À compléter dans le message : {', '.join(verdict.a_completer)}")
     message_propose = ["", "Message proposé :", verdict.message]
     ecrire = lien_ecrire(annonce, verdict.message, page_ecrire, canal_signal) if page_ecrire else None
     ligne_ecrire = ["", f"✉️ Copier le message et écrire au bailleur : {ecrire}"] if ecrire else []
