@@ -17,6 +17,18 @@ from nest import scoring, trajet as module_trajet
 # Sonnet d'abord : on ne passera à un modèle plus gros que sur écart démontré.
 MODELE = "claude-sonnet-5"
 
+# Rempli AVANT le message (les champs sont générés dans l'ordre) : Claude liste d'abord ce
+# que l'annonce exige, puis y répond. Sans cette étape, il sautait des questions.
+DESCRIPTION_EXIGENCES = (
+    "Ce que l'annonce demande de dire dans le premier message, ou impose au candidat "
+    "(questions, garantie exigée, pièces, contraintes de contact ou de visite), un point par "
+    "entrée, dans l'ordre de l'annonce ; liste vide si elle ne demande rien")
+DESCRIPTION_A_COMPLETER = (
+    "Les exigences de l'annonce auxquelles le message ne peut PAS répondre faute d'information "
+    "dans le profil, ou que le locataire ne remplit pas (ex. « Visale exigée », « revenus du "
+    "garant »), 2 à 6 mots chacune ; liste vide si le message couvre tout. N'y mets jamais une "
+    "exigence que les faits du profil couvrent : chaque fausse alerte fait perdre du temps")
+
 
 class Evaluation(BaseModel):
     """Verdict de Claude sur un critère."""
@@ -36,7 +48,9 @@ class Verdict(BaseModel):
     station_citee: str | None = Field(description="Station de métro/RER citée dans la description, sinon null")
     risque_arnaque: Literal["faible", "moyen", "eleve"] = Field(description="Risque que l'annonce soit une arnaque, d'après l'annonce et le profil du vendeur")
     duree_max_mois: float | None = Field(description="Durée maximale de location si l'annonce la limite (ex. sous-location de 2 mois, 3 semaines = 0.75, « jusqu'à fin janvier ») ; null si bail sans limite ou non précisé")
+    exigences_annonce: list[str] = Field(description=DESCRIPTION_EXIGENCES)
     message: str = Field(description="Premier message au bailleur, prêt à envoyer")
+    a_completer: list[str] = Field(description=DESCRIPTION_A_COMPLETER)
 
 
 def _regles_message(profil: dict) -> str:
@@ -49,19 +63,40 @@ def _regles_message(profil: dict) -> str:
     exemple = (f"""
 Exemple de ton et de mise en forme (à adapter, pas à recopier mot pour mot) :
 {modele}""" if modele else "")
+    # Faits facultatifs, cités seulement si l'annonce les demande.
+    facultatifs = ""
+    if criteres := (loc.get("criteres_recherche") or "").strip():
+        facultatifs += f"- critères de recherche (seulement si l'annonce les demande) : {criteres} ;\n"
+    if historique := (loc.get("historique_location") or "").strip():
+        facultatifs += ("- logement actuel et passé (seulement si l'annonce le demande) : "
+                        f"{historique} ;\n")
     return f"""# Le message au bailleur
 Il doit sonner comme écrit par {loc['prenom']}, pas par une IA.
-Ce qu'il dit, en quelques phrases simples :
+
+## D'abord : ce que l'annonce exige (`exigences_annonce`)
+Beaucoup d'annonces disent quoi écrire dans le premier message (« merci de préciser… ») ou
+imposent une condition (garantie Visale, pièces, pas d'appel, visites à partir d'une date).
+Un message qui saute une de ces questions est écarté sans être lu. Donc :
+1. Relève chaque exigence dans `exigences_annonce`, dans l'ordre de l'annonce.
+2. Réponds à CHACUNE dans le message, avec les faits ci-dessous, de façon visible (une phrase
+   par question, dans l'ordre de l'annonce quand c'est naturel).
+3. Respecte les contraintes de contact : si les visites ne commencent qu'à une date, propose
+   une visite à partir de cette date.
+4. Si un fait manque pour répondre, ou si {loc['prenom']} ne remplit pas une condition : n'invente
+   rien, ne prétends pas la remplir, et note-la dans `a_completer`.
+
+## Les faits (la seule matière autorisée)
 - {loc['prenom']}, {loc['age']} ans, {loc['situation']} ;
 - {loc['emploi']} ; le logement est proche de son lieu de travail ;
 - garanties : {loc['garanties']} ; arrivée souhaitée : {loc['arrivee']} ;
-- demander si le logement est toujours disponible et proposer une visite.
-Règles :
+{facultatifs}- demander si le logement est toujours disponible et proposer une visite.
+
+## Règles
+- N'invente JAMAIS un fait absent de cette liste (revenus, garant, logement actuel, pièces).
 - Ne reprends PAS les détails de l'annonce (nom de rue, équipements, exposition, formules de
   l'annonceur) : c'est ce qui trahit un message généré.
-- Personnalise uniquement pour répondre à ce que l'annonce demande ou impose (présenter sa
-  situation, des dates, des documents, un profil recherché, une date de disponibilité éloignée
-  de l'arrivée souhaitée) ; sinon, reste générique.
+- Hors exigences de l'annonce, reste générique (une date de disponibilité éloignée de
+  l'arrivée souhaitée mérite tout de même un mot).
 {regle_taire}- Mise en forme aérée, avec une ligne vide entre chaque bloc : « Bonjour, », puis un paragraphe
   sur sa situation, un paragraphe sur les garanties (revenus, garant), une ligne pour la
   question et la visite, puis « Bonne journée, » et « {loc['prenom']} » sur la ligne suivante.
@@ -175,7 +210,9 @@ def cout_usd(usage) -> float:
 class Message(BaseModel):
     """Message seul (pour régénérer sans tout rejuger)."""
 
+    exigences_annonce: list[str] = Field(description=DESCRIPTION_EXIGENCES)
     message: str = Field(description="Premier message au bailleur, prêt à envoyer")
+    a_completer: list[str] = Field(description=DESCRIPTION_A_COMPLETER)
 
 
 def rediger(annonce, profil: dict, client: anthropic.Anthropic | None = None):
