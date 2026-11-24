@@ -90,9 +90,39 @@ def _convertir(ad, type_bien: str) -> Annonce:
     )
 
 
-def chercher(profil: dict, pages: int = 1, pause_s: float = 1.5,
+def requetes(profils: list[dict]) -> list[tuple[str, dict, int]]:
+    """Requêtes à lancer pour toutes les recherches : (type_bien, filtres, loyer max).
+
+    Un type demandé par deux recherches n'est interrogé qu'une fois, au loyer le plus
+    haut (la colocation : 1 100 € pour la principale, 3 000 € pour la coloc entre
+    amis) ; le filtre de budget de chaque recherche trie ensuite.
+    - studio_t1 : logement entier, sans filtre sur les pièces (choix du 16/11) ;
+    - grand_logement : logement entier d'au moins `pieces_min` pièces (23/11) ;
+    - colocation : catégorie Colocations.
+    """
+    plafonds: dict[str, int] = {}
+    pieces_min = 3
+    for profil in profils:
+        r = profil["recherche"]
+        for t in r["types"]:
+            plafonds[t] = max(plafonds.get(t, 0), int(r["budget_max_cc"]))
+        if "grand_logement" in r["types"]:
+            pieces_min = int(r.get("pieces_min", pieces_min))
+    filtres = {
+        "studio_t1": dict(category=lbc.Category.IMMOBILIER_LOCATIONS, real_estate_type=TYPES_LOGEMENT),
+        "grand_logement": dict(category=lbc.Category.IMMOBILIER_LOCATIONS, real_estate_type=TYPES_LOGEMENT,
+                               rooms=[pieces_min, 99]),
+        "colocation": dict(category=lbc.Category.IMMOBILIER_COLOCATIONS),
+    }
+    return [(t, filtres[t], plafond) for t, plafond in plafonds.items() if t in filtres]
+
+
+def chercher(profil: dict | list[dict], pages: int = 1, pause_s: float = 1.5,
              depuis: str | None = None, pages_max: int = 15) -> list[Annonce]:
-    """Récupère les annonces les plus récentes correspondant au profil.
+    """Récupère les annonces les plus récentes pour un profil ou une liste de profils.
+
+    Avec plusieurs profils (une recherche chacun), chaque type de bien n'est lu qu'une
+    fois : voir `requetes`. Chaque annonce porte le type de la requête qui l'a trouvée.
 
     `pages` > 1 sert au rejeu : on pagine (100 annonces par page) jusqu'à ce
     que Leboncoin ne renvoie plus rien, avec une pause entre deux pages.
@@ -107,14 +137,15 @@ def chercher(profil: dict, pages: int = 1, pause_s: float = 1.5,
         >>> annonces = chercher(charger_profil())
         >>> annonces[0].titre
     """
-    recherche = profil["recherche"]
-    bureaux = recherche["bureaux"]
-    budget = int(recherche["budget_max_cc"])
+    if isinstance(profil, dict):
+        profil = [profil]
+    bureaux = profil[0]["recherche"]["bureaux"]
+    rayon_km = max(p["recherche"]["rayon_recherche_km"] for p in profil)
     zone = lbc.City(
         lat=bureaux["lat"],
         lng=bureaux["lng"],
-        radius=int(recherche["rayon_recherche_km"] * 1000),
-        city=recherche["ville"],   # simple libellé : la zone, c'est le rayon autour du lieu de travail
+        radius=int(rayon_km * 1000),
+        city=profil[0]["recherche"]["ville"],   # simple libellé : la zone, c'est le rayon autour du lieu de travail
     )
     client = nouveau_client()
     annonces: list[Annonce] = []
@@ -122,14 +153,10 @@ def chercher(profil: dict, pages: int = 1, pause_s: float = 1.5,
     if depuis:
         pages = pages_max
     limite = 50 if pages == 1 else 100
-    requetes = []
-    if "studio_t1" in recherche["types"]:
-        requetes.append(("studio_t1", dict(category=lbc.Category.IMMOBILIER_LOCATIONS,
-                                           rooms=[1, 1], real_estate_type=TYPES_LOGEMENT)))
-    if "colocation" in recherche["types"]:
-        requetes.append(("colocation", dict(category=lbc.Category.IMMOBILIER_COLOCATIONS)))
 
-    for type_bien, filtres in requetes:
+    for numero, (type_bien, filtres, budget) in enumerate(requetes(profil)):
+        if numero:
+            time.sleep(pause_s)         # rythme modéré entre deux requêtes (DataDome)
         for page in range(1, pages + 1):
             res = client.search(sort=lbc.Sort.NEWEST, locations=[zone], limit=limite,
                                 page=page, price=[0, budget], **filtres)

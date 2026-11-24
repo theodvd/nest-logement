@@ -77,10 +77,16 @@ n'aurait pas pensé à dire. La liste de critères est le produit final, pas le 
 4. **Le quartier** : ambiance recherchée, commerces, sport, vie nocturne, calme, sécurité,
    proximité d'amis ou de lieux réguliers.
 5. **Le trajet, au-delà des minutes** : tolérance aux changements, marche (aime-t-il
-   marcher ? → `poids_minute_marche`), vélo, moto avec parking (→ `moto: true`), trajets
-   secondaires (gare, école, amis).
+   marcher ? → `poids_minute_marche`), RER et Transilien (les supporte-t-il ? →
+   `poids_minute_rer`, 1.25 s'il les déteste, 1 sinon), vélo, moto avec parking
+   (→ `moto: true`), trajets secondaires (gare, école, amis).
 6. **Bail et budget** : durée réelle du séjour, bail mobilité, sous-location (pas d'APL),
    colocation (à quelles conditions), où mettre un euro de plus et où économiser.
+   Cherche-t-il AUSSI à plusieurs, avec des amis ? Si oui : prénoms dans l'ordre de
+   priorité, situation et revenus de chacun, garants (vides si inconnus, jamais inventés),
+   budget TOTAL du groupe selon le nombre de chambres → bloc `autres_recherches` (exemple
+   commenté dans `profil.example.yaml`). Prévenir que chaque recherche en plus augmente
+   le coût Claude.
 7. **Arbitrages forcés** (AskUserQuestion, 4 à 6 dilemmes concrets, ex. « 15 m² à 15 min
    ou 22 m² à 30 min ? », « meublé moyen ou vide lumineux ? »). Ce sont eux qui fixent
    les poids relatifs : un critère qui gagne ses arbitrages monte en poids.
@@ -97,8 +103,9 @@ n'aurait pas pensé à dire. La liste de critères est le produit final, pas le 
    un message (`ne_jamais_mentionner`, ex. un animal).
 4. Écrire `profil.yaml` en partant de `profil.example.yaml` (mêmes sections, mêmes clés,
    commentaires gardés) : `recherche`, `preferences` (portrait de 5 à 8 lignes),
-   `locataire`, `criteres`, `arnaques`, `notif`, `mails`. Ne jamais modifier
-   `profil.example.yaml`.
+   `locataire`, `criteres`, `autres_recherches` (seulement s'il cherche aussi à plusieurs),
+   `arnaques`, `notif`, `relances` (adapter les deux textes à sa situation), `mails`.
+   Ne jamais modifier `profil.example.yaml`.
 
 ### Format des critères (contrat avec nest/scoring.py)
 

@@ -18,6 +18,7 @@ import json
 import re
 from datetime import datetime, timedelta
 
+from nest.base import PRINCIPALE, cle_recherche, filtre_recherche
 from nest.filtres import distance_km
 
 # Annonces auxquelles on compare : celles qui ont atteint (ou vont atteindre) le jugement.
@@ -95,8 +96,8 @@ def meme_logement(a: dict, b: dict) -> bool:
     return distance <= DISTANCE_MAX_MIXTE_KM
 
 
-def trouver(annonce, base) -> dict | None:
-    """Annonce déjà connue qui décrit le même logement, ou None.
+def trouver(annonce, base, recherche: str = PRINCIPALE) -> dict | None:
+    """Annonce déjà connue de cette recherche qui décrit le même logement, ou None.
 
     Renvoie {"cle", "statut", "vue_le", "annonce"} (annonce = dict de l'original).
     """
@@ -104,15 +105,16 @@ def trouver(annonce, base) -> dict | None:
     if not loyer or not surface:
         return None
     depuis = (datetime.now() - timedelta(days=FENETRE_JOURS)).isoformat(timespec="seconds")
+    condition, motif = filtre_recherche(recherche)
     lignes = base.cx.execute(
         f"""SELECT cle, statut, vue_le, annonce FROM annonces
             WHERE statut IN ({",".join("?" * len(STATUTS_COMPARES))})
-              AND cle != ? AND vue_le >= ?
+              AND cle != ? AND vue_le >= ? AND {condition}
               AND json_extract(annonce, '$.type_bien') = ?
               AND abs(json_extract(annonce, '$.surface_m2') - ?) <= ?
               AND abs(json_extract(annonce, '$.loyer_cc') - ?) <= ?
             ORDER BY vue_le""",
-        (*STATUTS_COMPARES, annonce.cle, depuis, annonce.type_bien,
+        (*STATUTS_COMPARES, cle_recherche(annonce.cle, recherche), depuis, motif, annonce.type_bien,
          surface, TOLERANCE_SURFACE_M2, loyer, TOLERANCE_LOYER * loyer)).fetchall()
     nouvelle = annonce.to_dict()
     for cle, statut, vue_le, brut in lignes:

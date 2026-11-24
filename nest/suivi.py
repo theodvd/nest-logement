@@ -12,6 +12,7 @@ Exemple d'appel (voir l'état du suivi dans le terminal) :
 """
 
 import json
+import re
 from datetime import datetime
 
 STATUTS = ["contacte", "reponse", "visite", "dossier", "accepte"]
@@ -64,15 +65,35 @@ def _annonce_correspondante(base, classement) -> tuple[str, str] | None:
     return tuple(lignes[0]) if len(lignes) == 1 else None    # ambigu = pas de rattachement
 
 
+RE_SUJET_LBC = re.compile(r'Nouveau message pour "(.+)" sur leboncoin')
+
+
+def _annonce_par_sujet(base, sujet: str | None) -> tuple[str, str] | None:
+    """Annonce Leboncoin désignée par le sujet du mail : « Nouveau message pour "<titre>" ».
+
+    Plus sûr que surface et loyer : le titre est exact. Si plusieurs annonces portent ce
+    titre (republication), on préfère celle qui a une candidature, puis la plus récente.
+    """
+    if not sujet or not (m := RE_SUJET_LBC.search(sujet)):
+        return None
+    ligne_trouvee = base.cx.execute(
+        """SELECT a.cle, json_extract(a.annonce, '$.url')
+           FROM annonces AS a LEFT JOIN candidatures AS c ON c.cle = a.cle
+           WHERE a.cle LIKE 'leboncoin:%' AND trim(json_extract(a.annonce, '$.titre')) = trim(?)
+           ORDER BY c.cle IS NULL, a.vue_le DESC
+           LIMIT 1""", (m.group(1),)).fetchone()
+    return tuple(ligne_trouvee) if ligne_trouvee else None
+
+
 def rattacher(base, mail, classement) -> tuple[str, str | None]:
     """Trouve (ou crée) la candidature concernée par ce mail.
 
-    Ordre : 1) annonce nest reconnue ; 2) même interlocuteur et même bien ;
+    Ordre : 0) titre exact du sujet Leboncoin ; 1) annonce nest reconnue ; 2) même interlocuteur et même bien ;
     3) bien non précisé : même fil Gmail, sinon dernière candidature de cet
     interlocuteur ; 4) sinon nouvelle candidature.
     Renvoie (cle, url de l'annonce ou None).
     """
-    if trouvee := _annonce_correspondante(base, classement):
+    if trouvee := _annonce_par_sujet(base, mail.sujet) or _annonce_correspondante(base, classement):
         return trouvee
     cx = base.cx
     if classement.bien:

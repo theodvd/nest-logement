@@ -189,8 +189,20 @@ def lire_signalements(base) -> list[str]:
         if msg.get("event") != "message":
             continue
         dernier = msg["id"]
+        texte = msg.get("message", "").strip()
+        # Le canal porte aussi le suivi des candidatures (« ecrit <id> », « relance <id> <n> »,
+        # envoyés par la page pont) : seul un message qui commence par « arnaque » bloque.
+        if texte.startswith(("ecrit ", "relance ")):
+            try:
+                from nest import relances          # import local : relances importe notif et suivi
+                relances.noter_contact(base, texte)
+            except Exception as err:
+                log.warning("Suivi « %s » non traité : %s", texte, err)
+            continue
+        if not texte.startswith("arnaque"):
+            continue
         # UUID d'abord : celui d'une annonce Gens de Confiance peut contenir 8 chiffres d'affilée.
-        if m := RE_UUID.search(msg.get("message", "")) or re.search(r"(\d{8,})", msg.get("message", "")):
+        if m := RE_UUID.search(texte) or re.search(r"(\d{8,})", texte):
             try:
                 bloques.append(bloquer(m.group(0), base))
             except Exception as err:

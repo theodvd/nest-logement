@@ -51,7 +51,8 @@
 </main>
 <script>
   // Fragment = base64url(deflate brut(JSON {i: id annonce, c: catégorie, t: titre, m: message,
-  //            s: canal ntfy de signalement, u: URL de l'annonce hors Leboncoin})).
+  //            s: canal ntfy de signalement, u: URL de l'annonce hors Leboncoin,
+  //            r: numéro de relance, absent pour un premier message})).
   async function lire() {
     const b64 = location.hash.slice(1).replace(/-/g, "+").replace(/_/g, "/");
     const octets = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
@@ -64,7 +65,7 @@
       const s = getSelection(); s.removeAllRanges(); s.addRange(r); return false;
     });
   }
-  lire().then(({ i, c, t, m, s, u }) => {
+  lire().then(({ i, c, t, m, s, u, r }) => {
     document.getElementById("titre").textContent = t || "Écrire au bailleur";
     document.getElementById("message").textContent = m;
     const etat = document.getElementById("etat");
@@ -79,7 +80,18 @@
       document.getElementById("annonce").href = `https://www.leboncoin.fr/ad/${c || "locations"}/${i}`;
     }
     // Pas de preventDefault : le lien suit son cours (ouvre l'app Leboncoin si installée).
-    document.getElementById("ecrire").addEventListener("click", () => { copier(m); });
+    // Suivi : toucher ce lien vaut envoi (choix du 15/11). nest l'enregistre comme contact
+    // (ou relance) et propose les relances s'il n'y a pas de réponse. keepalive : la requête
+    // part même si la page s'efface aussitôt pour ouvrir Leboncoin.
+    let signale = false;
+    document.getElementById("ecrire").addEventListener("click", () => {
+      copier(m);
+      if (s && !signale) {
+        signale = true;
+        fetch(`https://ntfy.sh/${s}`, { method: "POST", keepalive: true,
+                                        body: r ? `relance ${i} ${r}` : `ecrit ${i}` }).catch(() => {});
+      }
+    });
     // Signalement : nest relève ce canal à chaque passage et bloque le compte pour toujours.
     const boutonSignal = document.getElementById("signaler");
     if (s) {

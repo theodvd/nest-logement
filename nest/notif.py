@@ -45,7 +45,12 @@ def _ligne_trajet(trajet, position_precise: bool) -> str:
     if trajet.mode == "moto":
         return (f"{approx}{trajet.minutes_moto} min en moto (parking mentionné), "
                 f"{trajet.minutes_transports} min en transports")
-    morceaux = [f"{approx}{trajet.minutes} min"]
+    if getattr(trajet, "minutes_rer", None) and trajet.minutes != trajet.minutes_transports:
+        # Malus RER (23/11) : la durée réelle d'abord, puis ce qu'elle compte.
+        morceaux = [f"{approx}{trajet.minutes_transports} min dont {trajet.minutes_rer} en RER "
+                    f"(compte comme {trajet.minutes})"]
+    else:
+        morceaux = [f"{approx}{trajet.minutes} min"]
     if trajet.station:
         morceaux.append(f"{trajet.station} à {trajet.marche_station_min} min à pied")
     if trajet.lignes:
@@ -56,7 +61,8 @@ def _ligne_trajet(trajet, position_precise: bool) -> str:
     return " · ".join(morceaux)
 
 
-def lien_ecrire(annonce, message: str, page: str, canal_signal: str | None = None) -> str:
+def lien_ecrire(annonce, message: str, page: str, canal_signal: str | None = None,
+                relance: int | None = None) -> str:
     """Lien vers la page pont qui copie le message et ouvre le formulaire Leboncoin.
 
     Le message voyage compressé dans le fragment (#…) : le navigateur ne l'envoie
@@ -69,6 +75,8 @@ def lien_ecrire(annonce, message: str, page: str, canal_signal: str | None = Non
                "s": canal_signal}
     if annonce.source != "leboncoin":
         donnees["u"] = annonce.url
+    if relance:
+        donnees["r"] = relance          # la page pont signale « relance <id> <n> » au toucher
     charge = json.dumps(donnees, ensure_ascii=False, separators=(",", ":")).encode()
     compresseur = zlib.compressobj(9, zlib.DEFLATED, -15)          # deflate « brut »
     brut = compresseur.compress(charge) + compresseur.flush()
@@ -76,14 +84,22 @@ def lien_ecrire(annonce, message: str, page: str, canal_signal: str | None = Non
 
 
 def composer(annonce, trajet, verdict, score: int, lignes: list,
-             page_ecrire: str | None = None, canal_signal: str | None = None) -> dict:
+             page_ecrire: str | None = None, canal_signal: str | None = None,
+             prefixe: str | None = None) -> dict:
     """Construit le contenu de la notif (titre, corps, boutons, photo).
 
     « Coche » = critères bien satisfaits, les plus lourds d'abord ;
     « coince » = critères ratés qui pèsent, plus les alertes de Claude.
+
+    `prefixe` marque une autre recherche (« 👥 » pour la coloc entre amis). Ses notifs
+    donnent le nombre de chambres et le loyer total du groupe, et le lien « écrire »
+    ne déclenche pas de relance (les textes de relance sont ceux de la recherche solo).
     """
     surface = f"{annonce.surface_m2:.0f} m² · " if annonce.surface_m2 else ""
-    titre = f"{score}/100 · {surface}{annonce.loyer_cc:.0f} € CC · {trajet.minutes} min"
+    chambres = getattr(verdict, "chambres_pour_le_groupe", None)
+    loyer = getattr(verdict, "loyer_total_groupe_cc", None) or annonce.loyer_cc
+    titre = (f"{prefixe + ' ' if prefixe else ''}{score}/100 · "
+             f"{f'{chambres} ch · ' if chambres else ''}{surface}{loyer:.0f} € CC · {trajet.minutes} min")
 
     par_poids = sorted(lignes, key=lambda l: -l.poids)
     coche = [l.libelle for l in par_poids if l.satisfaction >= 0.75][:4]
@@ -104,7 +120,8 @@ def composer(annonce, trajet, verdict, score: int, lignes: list,
     if getattr(verdict, "a_completer", None):
         corps.append(f"✍️ À compléter dans le message : {', '.join(verdict.a_completer)}")
     message_propose = ["", "Message proposé :", verdict.message]
-    ecrire = lien_ecrire(annonce, verdict.message, page_ecrire, canal_signal) if page_ecrire else None
+    ecrire = (lien_ecrire(annonce, verdict.message, page_ecrire, None if prefixe else canal_signal)
+              if page_ecrire else None)
     ligne_ecrire = ["", f"✉️ Copier le message et écrire au bailleur : {ecrire}"] if ecrire else []
 
     itineraire = ("https://www.google.com/maps/dir/?api=1&travelmode=transit"
@@ -139,7 +156,8 @@ def composer(annonce, trajet, verdict, score: int, lignes: list,
     return contenu
 
 
-def composer_doublon(annonce, original: dict, site: str, site_original: str) -> dict:
+def composer_doublon(annonce, original: dict, site: str, site_original: str,
+                     prefixe: str | None = None) -> dict:
     """Notif courte : un logement déjà notifié réapparaît sur un autre site.
 
     `original` vient de doublons.trouver() ; ex. de titre :
@@ -148,7 +166,7 @@ def composer_doublon(annonce, original: dict, site: str, site_original: str) -> 
     surface = f" · {annonce.surface_m2:.0f} m²" if annonce.surface_m2 else ""
     titre_original = original["annonce"].get("titre") or "ce logement"
     return {
-        "title": f"🔁 Aussi sur {site} · {annonce.loyer_cc:.0f} € CC{surface}",
+        "title": f"{prefixe + ' ' if prefixe else ''}🔁 Aussi sur {site} · {annonce.loyer_cc:.0f} € CC{surface}",
         "message": (f"« {titre_original[:80]} », notifié le {original['vue_le'][8:10]}/"
                     f"{original['vue_le'][5:7]} sur {site_original}, est aussi publié sur {site}. "
                     f"Une seconde porte pour contacter le bailleur.\n🔗 {annonce.url}"),
@@ -158,6 +176,31 @@ def composer_doublon(annonce, original: dict, site: str, site_original: str) -> 
         "actions": [{"action": "view", "label": "Annonce", "url": annonce.url},
                     {"action": "view", "label": "Original", "url": original["annonce"].get("url", "")}],
     }
+
+
+def composer_relance(annonce, message: str, numero: int, total: int, heures_sans_reponse: float,
+                     page_ecrire: str | None, canal_signal: str | None) -> dict:
+    """Notif de relance : pas de réponse du bailleur, la relance est prête à coller.
+
+    Ex. de titre : « 🔁 Relance 1/2 · 17 m² · 820 € CC ».
+    """
+    surface = f" · {annonce.surface_m2:.0f} m²" if annonce.surface_m2 else ""
+    ecrire = (lien_ecrire(annonce, message, page_ecrire, canal_signal, relance=numero)
+              if page_ecrire else None)
+    corps = [f"« {annonce.titre[:80]} » : pas de réponse depuis {heures_sans_reponse:.0f} h.",
+             f"🔗 {annonce.url}"]
+    if ecrire:
+        corps += ["", f"✉️ Copier la relance et écrire au bailleur : {ecrire}"]
+    contenu = {
+        "title": f"🔁 Relance {numero}/{total}{surface} · {annonce.loyer_cc:.0f} € CC",
+        "message": "\n".join(corps + ["", "Relance proposée :", message]),
+        "click": ecrire or annonce.url,
+        "tags": ["repeat"],
+        "priority": 3,
+    }
+    if _poids_iphone(contenu) > POIDS_MAX_IPHONE:      # la page pont copie le message
+        contenu["message"] = "\n".join(corps)
+    return contenu
 
 
 TITRES_MAIL = {

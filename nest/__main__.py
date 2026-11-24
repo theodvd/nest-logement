@@ -27,9 +27,9 @@ from pathlib import Path
 import requests
 import yaml
 
-from nest import doublons, environs as module_environs, jugement, notif, notion, trajet as module_trajet, vendeurs
+from nest import doublons, environs as module_environs, jugement, notif, notion, recherches, relances, trajet as module_trajet, vendeurs
 from nest.annonce import Annonce
-from nest.base import Base
+from nest.base import Base, filtre_recherche
 from nest.filtres import raison_ecart
 from nest.mails import gmail, passage as passage_mails
 from nest.sources import gensdeconfiance, leboncoin
@@ -189,7 +189,7 @@ def alerter_session_gdc(erreur: Exception, a_blanc: bool) -> None:
         log.exception("Alerte cookie Gens de Confiance non envoyée")
 
 
-def annonces_gdc(profil: dict, a_blanc: bool) -> list[Annonce]:
+def annonces_gdc(profil: dict | list[dict], a_blanc: bool) -> list[Annonce]:
     """Annonces Gens de Confiance, au plus toutes les 30 min, sans jamais bloquer Leboncoin.
 
     Même logique de rattrapage que Leboncoin, sur son propre horodatage.
@@ -216,17 +216,20 @@ def annonces_gdc(profil: dict, a_blanc: bool) -> list[Annonce]:
     return annonces
 
 
-def annonces_en_attente(base: Base) -> list[Annonce]:
-    """Annonces mises de côté au-delà du plafond de jugements, à juger en priorité."""
-    lignes = base.cx.execute("SELECT annonce FROM annonces WHERE statut = 'en_attente' "
-                             "ORDER BY vue_le").fetchall()
+def annonces_en_attente(base: Base, recherche: str = recherches.PRINCIPALE) -> list[Annonce]:
+    """Annonces de cette recherche mises de côté au-delà du plafond de jugements."""
+    condition, motif = filtre_recherche(recherche)
+    lignes = base.cx.execute(f"SELECT annonce FROM annonces WHERE statut = 'en_attente' AND {condition} "
+                             "ORDER BY vue_le", (motif,)).fetchall()
     return [Annonce(**json.loads(brut)) for (brut,) in lignes]
 
 
 def passage(profil: dict, base: Base, a_blanc: bool = False) -> None:
-    """Exécute un passage complet sur toutes les sources."""
+    """Exécute un passage complet : lecture des sites une fois, puis chaque recherche."""
     if signales := vendeurs.lire_signalements(base):
         log.info("Comptes signalés et bloqués : %s", ", ".join(signales))
+    liste = recherches.lister(profil)
+    profils = [p for _, p in liste]
     # Rattrapage : après un trou (Mac en veille, coupure réseau), on lit Leboncoin
     # jusqu'à retrouver le dernier passage réussi (marge d'une heure), et le filtre
     # d'ancienneté s'allonge d'autant : une annonce jamais vue n'est jamais jetée.
@@ -240,18 +243,34 @@ def passage(profil: dict, base: Base, a_blanc: bool = False) -> None:
     # Chaque source est isolée : un blocage DataDome de Leboncoin (presque un passage
     # sur deux début novembre) ne doit pas priver nest de Gens de Confiance.
     try:
-        annonces = leboncoin.chercher(profil, depuis=depuis)
+        annonces = leboncoin.chercher(profils, depuis=depuis)
         if not a_blanc:
             # Noté seulement après une lecture réussie : une coupure réseau déclenche le rattrapage.
             DERNIER_PASSAGE.write_text(datetime.now().isoformat(timespec="seconds"))
     except Exception:
         log.exception("Leboncoin en échec, les autres sources continuent")
         annonces = []
-    annonces += annonces_gdc(profil, a_blanc)
-    nouvelles = [a for a in annonces if not base.deja_vue(a.cle)]
-    attente = annonces_en_attente(base)
-    log.info("%d nouvelles annonces sur %d, %d en attente de jugement",
-             len(nouvelles), len(annonces), len(attente))
+    annonces += annonces_gdc(profils, a_blanc)
+
+    # Chaque recherche est isolée : une panne de la coloc ne prive pas la recherche principale.
+    for rid, p in liste:
+        types = p["recherche"]["types"]
+        # Une annonce par clé et par recherche (le premier type trouvé l'emporte).
+        siennes = list({a.cle: a for a in reversed([a for a in annonces if a.type_bien in types])}.values())
+        try:
+            passage_recherche(rid, p, siennes, base, a_blanc, anciennete_h)
+        except Exception:
+            log.exception("Recherche %s en échec", rid)
+
+
+def passage_recherche(rid: str, profil: dict, annonces: list[Annonce], base: Base,
+                      a_blanc: bool, anciennete_h: float) -> None:
+    """Filtres, trajet, jugement et notif pour une recherche (principale ou coloc entre amis)."""
+    nouvelles = [a for a in annonces if not base.deja_vue(a.cle, rid)]
+    attente = annonces_en_attente(base, rid)
+    log.info("[%s] %d nouvelles annonces sur %d, %d en attente de jugement",
+             rid, len(nouvelles), len(annonces), len(attente))
+    prefixe = profil.get("prefixe")
 
     # 1. Filtres durs + trajet : tout ce qui ne coûte (presque) rien.
     #    Les annonces en attente ont déjà passé les filtres : on ne les refiltre pas.
@@ -259,15 +278,17 @@ def passage(profil: dict, base: Base, a_blanc: bool = False) -> None:
     cles_attente = {a.cle for a in attente}
     for annonce in attente + nouvelles:
         if annonce.cle not in cles_attente and (raison := raison_ecart(annonce, profil, anciennete_max_h=anciennete_h)):
-            base.enregistrer(annonce, "ecartee", raison=raison)
+            base.enregistrer(annonce, "ecartee", raison=raison, recherche=rid)
             continue
         t = module_trajet.calculer(annonce, profil, base)
         if t.minutes > seuil_trajet(annonce, t, profil):
-            base.enregistrer(annonce, "ecartee", raison=f"trajet {t.minutes} min", trajet_min=t.minutes)
+            base.enregistrer(annonce, "ecartee", raison=f"trajet {t.minutes} min", trajet_min=t.minutes,
+                             recherche=rid)
             continue
         vendeur = vendeurs.profil_vendeur(annonce.vendeur_id, base, annonce=annonce)
         if vendeurs.est_bloque(vendeur, base):
-            base.enregistrer(annonce, "ecartee", raison=f"compte signalé ({vendeur.get('nom')})")
+            base.enregistrer(annonce, "ecartee", raison=f"compte signalé ({vendeur.get('nom')})",
+                             recherche=rid)
             continue
         candidates.append((annonce, t, vendeur))
 
@@ -276,11 +297,11 @@ def passage(profil: dict, base: Base, a_blanc: bool = False) -> None:
     #    (contenu complet) et jugées en priorité aux passages suivants.
     candidates.sort(key=lambda c: c[1].minutes)
     plafond = profil["notif"]["max_jugements_par_passage"]
-    log.info("%d candidates après filtres, %d jugées ce passage",
-             len(candidates), min(len(candidates), plafond))
+    log.info("[%s] %d candidates après filtres, %d jugées ce passage",
+             rid, len(candidates), min(len(candidates), plafond))
     if not a_blanc:
         for annonce, t, _ in candidates[plafond:]:
-            base.enregistrer(annonce, "en_attente", trajet_min=t.minutes)
+            base.enregistrer(annonce, "en_attente", trajet_min=t.minutes, recherche=rid)
 
     destination = profil["recherche"]["bureaux"]["adresse"]
     for annonce, t, vendeur in candidates[:plafond]:
@@ -293,18 +314,18 @@ def passage(profil: dict, base: Base, a_blanc: bool = False) -> None:
                 log.warning("Fiche Gens de Confiance illisible, jugée sans description : %s (%s)",
                             annonce.url, err)
             if raison := raison_ecart(annonce, profil, anciennete_max_h=anciennete_h):
-                base.enregistrer(annonce, "ecartee", raison=raison, trajet_min=t.minutes)
+                base.enregistrer(annonce, "ecartee", raison=raison, trajet_min=t.minutes, recherche=rid)
                 continue
         # Même logement déjà jugé (autre site ou republication) : ni second jugement ni
         # seconde notif. Seule exception, un logement notifié qui réapparaît sur un autre
         # site : notif courte « aussi sur ».
-        if original := doublons.trouver(annonce, base):
+        if original := doublons.trouver(annonce, base, rid):
             site, site_original = (doublons.nom_site(annonce.source),
                                    doublons.nom_site(original["annonce"]["source"]))
             base.enregistrer(annonce, "doublon", trajet_min=t.minutes,
-                             raison=f"doublon de {original['cle']} ({original['statut']})")
+                             raison=f"doublon de {original['cle']} ({original['statut']})", recherche=rid)
             if original["statut"] == "notifiee" and site != site_original:
-                contenu = notif.composer_doublon(annonce, original, site, site_original)
+                contenu = notif.composer_doublon(annonce, original, site, site_original, prefixe)
                 if a_blanc:
                     print("\n" + "=" * 60 + "\nDOUBLON  " + contenu["title"] + "\n" + contenu["message"])
                 else:
@@ -317,7 +338,7 @@ def passage(profil: dict, base: Base, a_blanc: bool = False) -> None:
         verdict, score, lignes, _ = jugement.juger(annonce, t, profil, environs)
         contenu = notif.composer(annonce, t, verdict, score, lignes,
                                  page_ecrire=profil["notif"].get("page_ecrire"),
-                                 canal_signal=vendeurs.canal_signalement())
+                                 canal_signal=vendeurs.canal_signalement(), prefixe=prefixe)
         notifier = score >= profil["notif"]["score_min"]
 
         if a_blanc:
@@ -333,11 +354,11 @@ def passage(profil: dict, base: Base, a_blanc: bool = False) -> None:
             except requests.RequestException:
                 # En attente : l'annonce sera rejugée et renotifiée au passage suivant.
                 log.exception("Notif non envoyée, reprise au prochain passage : %s", annonce.url)
-                base.enregistrer(annonce, "en_attente", trajet_min=t.minutes)
+                base.enregistrer(annonce, "en_attente", trajet_min=t.minutes, recherche=rid)
                 continue
         base.enregistrer(annonce, "notifiee" if notifier else "jugee",
                          score=score, trajet_min=t.minutes,
-                         verdict=verdict.model_dump())
+                         verdict=verdict.model_dump(), recherche=rid)
 
 
 def main() -> None:
@@ -381,14 +402,17 @@ def main() -> None:
         return
 
     if args.amorcer:
-        annonces = leboncoin.chercher(profil)
+        liste = recherches.lister(profil)
+        profils = [p for _, p in liste]
+        annonces = leboncoin.chercher(profils)
         if os.getenv("GDC_COOKIE"):
             try:
-                annonces += gensdeconfiance.chercher(profil)
+                annonces += gensdeconfiance.chercher(profils)
             except Exception as err:
                 log.warning("Amorçage sans Gens de Confiance : %s", err)
-        for a in annonces:
-            base.enregistrer(a, "amorcage")
+        for rid, p in liste:
+            for a in (a for a in annonces if a.type_bien in p["recherche"]["types"]):
+                base.enregistrer(a, "amorcage", recherche=rid)
         log.info("Amorçage : %d annonces marquées comme vues", len(annonces))
         return
 
@@ -408,6 +432,12 @@ def main() -> None:
             log.info("Mails ignorés : %s", e)
         except Exception:
             log.exception("Passage mails en échec")
+    # Après les mails : une réponse arrivée entre-temps annule la relance.
+    if not args.mails_seulement:
+        try:
+            relances.traiter(profil, base, a_blanc=args.sec)
+        except Exception:
+            log.exception("Relances en échec")
 
 
 if __name__ == "__main__":
