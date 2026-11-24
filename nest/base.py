@@ -9,6 +9,23 @@ from datetime import datetime
 from pathlib import Path
 
 CHEMIN_DEFAUT = Path(__file__).resolve().parent.parent / "data" / "nest.sqlite"
+PRINCIPALE = "principale"
+
+
+def cle_recherche(cle: str, recherche: str = PRINCIPALE) -> str:
+    """Clé de suivi d'une annonce dans une recherche (23/11).
+
+    La recherche principale garde la clé « source:id » (base existante inchangée) ;
+    une autre recherche la préfixe : « coloc_amis|leboncoin:123 ».
+    """
+    return cle if recherche == PRINCIPALE else f"{recherche}|{cle}"
+
+
+def filtre_recherche(recherche: str = PRINCIPALE) -> tuple[str, str]:
+    """Condition SQL (et paramètre) limitant la table annonces à une recherche."""
+    if recherche == PRINCIPALE:
+        return "cle NOT LIKE ?", "%|%"
+    return "cle LIKE ?", f"{recherche}|%"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS annonces (
@@ -70,20 +87,21 @@ class Base:
         self.cx = sqlite3.connect(chemin)
         self.cx.executescript(SCHEMA)
 
-    def deja_vue(self, cle: str) -> bool:
-        """True si l'annonce a déjà été traitée lors d'un passage précédent."""
-        ligne = self.cx.execute("SELECT 1 FROM annonces WHERE cle = ?", (cle,)).fetchone()
+    def deja_vue(self, cle: str, recherche: str = PRINCIPALE) -> bool:
+        """True si l'annonce a déjà été traitée par cette recherche lors d'un passage précédent."""
+        ligne = self.cx.execute("SELECT 1 FROM annonces WHERE cle = ?",
+                                (cle_recherche(cle, recherche),)).fetchone()
         return ligne is not None
 
     def enregistrer(self, annonce, statut: str, raison: str | None = None,
                     score: int | None = None, trajet_min: int | None = None,
-                    verdict: dict | None = None) -> None:
-        """Insère ou met à jour une annonce et son issue."""
+                    verdict: dict | None = None, recherche: str = PRINCIPALE) -> None:
+        """Insère ou met à jour une annonce et son issue dans une recherche."""
         self.cx.execute(
             """INSERT OR REPLACE INTO annonces
                (cle, vue_le, statut, raison, score, trajet_min, annonce, verdict)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (annonce.cle, datetime.now().isoformat(timespec="seconds"), statut, raison,
+            (cle_recherche(annonce.cle, recherche), datetime.now().isoformat(timespec="seconds"), statut, raison,
              score, trajet_min, json.dumps(annonce.to_dict(), ensure_ascii=False),
              json.dumps(verdict, ensure_ascii=False) if verdict else None),
         )

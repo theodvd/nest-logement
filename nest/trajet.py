@@ -5,6 +5,9 @@
   minute à pied peut compter moins qu'une minute en transports pour qui aime
   marcher (`poids_minute_marche` du profil : 0.67 = 30 min à pied ≈ 20 min de
   métro ; 1 = neutre).
+- RER et Transilien : les minutes passées à bord comptent `poids_minute_rer` fois
+  (1.25 = une minute de RER pèse comme 1 min 15 de métro ; 1 = neutre), y compris
+  pour la limite de trajet.
 - Moto (option `moto: true` du profil) : seulement si l'annonce mentionne un
   parking privé. Google ne calcule pas les deux-roues en France : on prend le
   temps en voiture à l'heure de pointe (TRAFFIC_AWARE), estimation prudente.
@@ -35,6 +38,8 @@ CHAMPS_TRANSIT = ",".join([
     "routes.legs.steps.transitDetails.transitLine.nameShort",
     "routes.legs.steps.transitDetails.transitLine.name",
     "routes.legs.steps.transitDetails.transitLine.vehicle.type",
+    "routes.legs.steps.transitDetails.stopDetails.departureTime",
+    "routes.legs.steps.transitDetails.stopDetails.arrivalTime",
 ])
 PARIS = ZoneInfo("Europe/Paris")
 
@@ -52,7 +57,8 @@ class Trajet:
     minutes: int                        # trajet EFFECTIF (meilleur mode, marche pondérée)
     mode: str                           # "transports", "marche" ou "moto"
     source: str                         # "google" ou "vol_oiseau"
-    minutes_transports: int | None = None
+    minutes_transports: int | None = None       # durée réelle en transports
+    minutes_rer: int | None = None              # dont minutes à bord d'un RER ou Transilien
     minutes_marche: int | None = None
     minutes_moto: int | None = None
     station: str | None = None          # première station empruntée
@@ -98,6 +104,22 @@ def _nom_ligne(ligne: dict) -> str:
     return court
 
 
+def est_rer(nom_ligne: str) -> bool:
+    """RER et Transilien : `_nom_ligne` les écrit tous « RER X » (J, L, H, U, N compris)."""
+    return nom_ligne.startswith("RER ")
+
+
+def _minutes_a_bord(etape: dict) -> int:
+    """Durée à bord d'une étape en transport : horaires de l'arrêt, sinon durée de l'étape."""
+    arrets = etape.get("transitDetails", {}).get("stopDetails") or {}
+    try:
+        depart = datetime.fromisoformat(arrets["departureTime"].replace("Z", "+00:00"))
+        arrivee = datetime.fromisoformat(arrets["arrivalTime"].replace("Z", "+00:00"))
+        return round((arrivee - depart).total_seconds() / 60)
+    except (KeyError, ValueError):
+        return round(_secondes(etape.get("staticDuration")) / 60)
+
+
 def _appeler(corps: dict, champs: str, cle_api: str) -> list[dict]:
     """Appel brut à Google Routes, renvoie la liste des routes."""
     rep = requests.post(URL_ROUTES, json=corps, timeout=20,
@@ -134,11 +156,13 @@ def _transports(lat: float, lng: float, bureaux: dict, cle_api: str) -> dict | N
         marche += _secondes(etape.get("staticDuration"))
 
     premiere = transports[0]["transitDetails"] if transports else {}
+    lignes = [_nom_ligne(e["transitDetails"].get("transitLine") or {}) for e in transports]
     return {
         "minutes_transports": round(_secondes(route.get("duration")) / 60),
+        "minutes_rer": sum(_minutes_a_bord(e) for e, nom in zip(transports, lignes) if est_rer(nom)),
         "station": ((premiere.get("stopDetails") or {}).get("departureStop") or {}).get("name"),
         "marche_station_min": round(marche / 60) if transports else None,
-        "lignes": [_nom_ligne(e["transitDetails"].get("transitLine") or {}) for e in transports],
+        "lignes": lignes,
         "changements": max(len(transports) - 1, 0) if transports else None,
     }
 
@@ -153,11 +177,15 @@ def _duree_simple(lat: float, lng: float, bureaux: dict, cle_api: str, mode: str
     return round(_secondes(routes[0].get("duration")) / 60) if routes else None
 
 
-def _effectif(infos: dict, poids_marche: float) -> tuple[int, str]:
-    """Choisit le meilleur mode (marche pondérée) : (minutes effectives, mode)."""
+def _effectif(infos: dict, poids_marche: float, poids_rer: float = 1.0) -> tuple[int, str]:
+    """Choisit le meilleur mode (marche et RER pondérés) : (minutes effectives, mode).
+
+    Ex. : 30 min en transports dont 20 de RER, poids 1,25 → 30 + 0,25 × 20 = 35 min.
+    """
     options = []
     if infos.get("minutes_transports") is not None:
-        options.append((infos["minutes_transports"], "transports"))
+        malus_rer = round((poids_rer - 1) * (infos.get("minutes_rer") or 0))
+        options.append((infos["minutes_transports"] + malus_rer, "transports"))
     if infos.get("minutes_marche") is not None:
         options.append((round(infos["minutes_marche"] * poids_marche), "marche"))
     if infos.get("minutes_moto") is not None:
@@ -189,6 +217,12 @@ def calculer(annonce, profil: dict, base) -> Trajet:
         # Transports (toujours) : en cache par coordonnées.
         cle = f"transit:{coords}"
         transit = base.trajet_en_cache(cle)
+        # Cache d'avant le malus RER (23/11) : sans RER, rien à mesurer ; avec, on recalcule.
+        if transit is not None and "minutes_rer" not in transit:
+            if any(est_rer(l) for l in transit.get("lignes") or []):
+                transit = None
+            else:
+                transit["minutes_rer"] = 0
         if transit is None:
             transit = _transports(annonce.lat, annonce.lng, bureaux, cle_api) or {}
             base.memoriser_trajet(cle, transit)
@@ -217,5 +251,5 @@ def calculer(annonce, profil: dict, base) -> Trajet:
         return Trajet(minutes=estimation, mode="transports", source="vol_oiseau",
                       minutes_transports=estimation)
 
-    minutes, mode = _effectif(infos, r.get("poids_minute_marche", 0.67))
+    minutes, mode = _effectif(infos, r.get("poids_minute_marche", 0.67), r.get("poids_minute_rer", 1.0))
     return Trajet(minutes=minutes, mode=mode, source="google", **infos)

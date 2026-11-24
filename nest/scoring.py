@@ -49,6 +49,7 @@ def mesure_auto(critere: dict, annonce, trajet, environs: dict) -> tuple[float, 
     - escalade_km : salle de bloc la plus proche, paliers ;
     - parc : 1 si parc ou square à ~5 min à pied, 0 sinon ;
     - vendeur_particulier : 1 si particulier, 0 si agence ;
+    - loyer_par_chambre : loyer total du groupe ÷ chambres (coloc entre amis), paliers ;
     - compte_fiable : 1 si identité de propriétaire vérifiée, sinon ancienneté du compte (paliers, en mois).
     """
     champ = critere["auto"]
@@ -72,6 +73,14 @@ def mesure_auto(critere: dict, annonce, trajet, environs: dict) -> tuple[float, 
             return 0.5, "inconnu"
         parc = environs["parc"]
         return (1.0, parc) if parc else (0.0, "aucun à 5 min")
+
+    if champ == "loyer_par_chambre":
+        chambres, total = environs.get("chambres_groupe"), environs.get("loyer_groupe_cc")
+        if not chambres or not total:
+            return 0.5, "inconnu"
+        par_chambre = total / chambres
+        return (_interpoler(par_chambre, critere["paliers"]),
+                f"{total:.0f} € pour {chambres} ch, soit {par_chambre:.0f} €")
 
     sources = {
         "surface_m2": annonce.surface_m2,

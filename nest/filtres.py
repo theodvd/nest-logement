@@ -18,6 +18,12 @@ COURTE_DUREE = re.compile(
 )
 
 
+# Recherche à plusieurs : une annonce de coloc qui ne parle jamais de « chambres » au pluriel
+# ne propose presque jamais deux chambres libres. Sans description (Gens de Confiance avant
+# lecture de la fiche), on laisse passer : le filtre est rejoué une fois la fiche lue.
+CHAMBRES_PLURIEL = re.compile(r"\bchambres\b", re.IGNORECASE)
+
+
 def mois_dispo(disponible_le: str | None) -> tuple[int, int] | None:
     """Convertit "11/2026" ou "01/11/2026" en (année, mois), None si absent ou illisible."""
     if not disponible_le:
@@ -89,6 +95,16 @@ def raison_ecart(annonce, profil: dict, maintenant: datetime | None = None,
     # 4. Budget (charges comprises).
     if annonce.loyer_cc and annonce.loyer_cc > recherche["budget_max_cc"]:
         return f"budget ({annonce.loyer_cc:.0f} € CC)"
+
+    # 4 bis. Recherche à plusieurs (coloc entre amis) : assez de chambres possibles.
+    #        Le nombre exact de chambres et le loyer total sont jugés par Claude.
+    if profil.get("groupe"):
+        pieces_min = recherche.get("pieces_min", 3)
+        if annonce.type_bien == "grand_logement" and annonce.pieces and annonce.pieces < pieces_min:
+            return f"trop peu de pièces pour le groupe ({annonce.pieces})"
+        if (annonce.type_bien == "colocation" and annonce.description
+                and not CHAMBRES_PLURIEL.search(annonce.titre + " " + annonce.description)):
+            return "coloc à une seule chambre libre"
 
     # 5. Distance à vol d'oiseau : évite de payer un calcul d'itinéraire inutile.
     if annonce.lat is None or annonce.lng is None:

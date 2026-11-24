@@ -43,9 +43,12 @@ URL_FICHE = SITE + "/fr/ui/post/realestate__rent/{uuid}"
 PARIS = ZoneInfo("Europe/Paris")
 
 # Filtres du site par type de bien du profil (valeurs multiples séparées par des virgules).
-# Studio/T1 : logement entier d'une pièce ; colocation : colocation ou chambre.
+# Logement entier (quel que soit le nombre de pièces, choix du 16/11) ; colocation : colocation ou chambre.
+# grand_logement (coloc entre amis, 23/11) : même filtre, le nombre de pièces est trié par
+# nest (paramètre du site inconnu, et non testable depuis Claude Code).
 FILTRES = {
-    "studio_t1": {"propertyTypes": "apartment,home", "rentalTypes": "home", "nbPieces": "1"},
+    "studio_t1": {"propertyTypes": "apartment,home", "rentalTypes": "home"},
+    "grand_logement": {"propertyTypes": "apartment,home", "rentalTypes": "home"},
     "colocation": {"rentalTypes": "flatshare,room"},
 }
 
@@ -155,9 +158,12 @@ def _convertir(item: dict, type_bien: str) -> Annonce:
     )
 
 
-def chercher(profil: dict, depuis: str | None = None, pages_max: int = 8,
+def chercher(profil: dict | list[dict], depuis: str | None = None, pages_max: int = 8,
              pause_s: float = 2.0, session: cffi.Session | None = None) -> list[Annonce]:
-    """Récupère les annonces récentes du profil (page 1 de chaque recherche).
+    """Récupère les annonces récentes d'un ou plusieurs profils (page 1 de chaque recherche).
+
+    Avec plusieurs profils, chaque type de bien n'est lu qu'une fois, au loyer le plus
+    haut demandé ; le filtre de budget de chaque recherche trie ensuite.
 
     Le site trie par date d'affichage (une annonce remontée revient en tête).
     `depuis` ("AAAA-MM-JJ HH:MM:SS") sert au rattrapage après un trou : chaque
@@ -171,32 +177,39 @@ def chercher(profil: dict, depuis: str | None = None, pages_max: int = 8,
         >>> annonces = chercher(charger_profil())
         >>> annonces[0].lieu, annonces[0].loyer_cc
     """
-    recherche = profil["recherche"]
+    profils = [profil] if isinstance(profil, dict) else profil
+    recherche = profils[0]["recherche"]
     bureaux = recherche["bureaux"]
+    plafonds: dict[str, int] = {}
+    for p in profils:
+        for t in p["recherche"]["types"]:
+            plafonds[t] = max(plafonds.get(t, 0), int(p["recherche"]["budget_max_cc"]))
     # Le site ignore lat/lon sans identifiant de lieu Google et centre sur Paris
     # (sans effet pour un lieu de travail parisien). Les deux restent obligatoires
     # (sans eux, la recherche porte sur toute la France).
     commun = {"types": "offering", "category": "realestate__rent",
-              "maxPrice": int(recherche["budget_max_cc"]),      # filtre le loyer HC : large
               "radius": int(recherche["rayon_recherche_km"]),
               "lat": bureaux["lat"], "lon": bureaux["lng"]}
     limite_ms = (datetime.strptime(depuis, "%Y-%m-%d %H:%M:%S").replace(tzinfo=PARIS).timestamp() * 1000
                  if depuis else None)
     session = session or client()
-    annonces: dict[str, Annonce] = {}
+    annonces: dict[tuple[str, str], Annonce] = {}
 
-    for type_bien in (t for t in recherche["types"] if t in FILTRES):
+    for type_bien in (t for t in plafonds if t in FILTRES):
         for page in range(1, (pages_max if depuis else 1) + 1):
             if annonces:
                 time.sleep(pause_s)
-            params = {**commun, **FILTRES[type_bien], **({"page": page} if page > 1 else {})}
+            # maxPrice filtre le loyer HC : large, le budget CC est revérifié par nest.
+            params = {**commun, **FILTRES[type_bien], "maxPrice": plafonds[type_bien],
+                      **({"page": page} if page > 1 else {})}
             props = _page_props(_lire(session, URL_RECHERCHE, params))
             if not props.get("user"):
                 raise SessionExpiree("le site ne reconnaît plus la session (cookie expiré ?)")
             resultat = props["initialSearchClassifieds"]
             items = resultat.get("items") or []
             for item in items:
-                annonces.setdefault(item["uuid"], _convertir(item, type_bien))
+                # Clé par type : un T3 vu par studio_t1 et grand_logement sert aux deux recherches.
+                annonces.setdefault((type_bien, item["uuid"]), _convertir(item, type_bien))
             if not limite_ms or page >= (resultat.get("lastPage") or 1) or not items:
                 break
             anciennes = sum((i.get("displayDate") or 0) < limite_ms for i in items)

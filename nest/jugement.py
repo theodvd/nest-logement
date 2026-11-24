@@ -12,7 +12,7 @@ from typing import Literal
 import anthropic
 from pydantic import BaseModel, Field
 
-from nest import scoring, trajet as module_trajet
+from nest import recherches, scoring, trajet as module_trajet
 
 # Sonnet d'abord : on ne passera à un modèle plus gros que sur écart démontré.
 MODELE = "claude-sonnet-5"
@@ -53,6 +53,18 @@ class Verdict(BaseModel):
     a_completer: list[str] = Field(description=DESCRIPTION_A_COMPLETER)
 
 
+class VerdictGroupe(Verdict):
+    """Recherche à plusieurs (coloc entre amis, 23/11) : chambres et loyer pour le groupe."""
+
+    chambres_pour_le_groupe: int | None = Field(description=(
+        "Nombre de chambres que le groupe d'amis pourrait occuper : toutes les chambres d'un "
+        "logement entier (un séjour ou un bureau ne compte pas), ou les chambres LIBRES d'une "
+        "colocation ; null si l'annonce ne permet pas de le savoir"))
+    loyer_total_groupe_cc: float | None = Field(description=(
+        "Loyer total charges comprises pour ces chambres : le loyer du logement entier, ou la "
+        "somme des loyers des chambres libres d'une colocation ; null si inconnu"))
+
+
 def _regles_message(profil: dict) -> str:
     """Consignes du premier message au bailleur (partagées par juger et rediger)."""
     loc = profil["locataire"]
@@ -63,13 +75,18 @@ def _regles_message(profil: dict) -> str:
     exemple = (f"""
 Exemple de ton et de mise en forme (à adapter, pas à recopier mot pour mot) :
 {modele}""" if modele else "")
-    # Faits facultatifs, cités seulement si l'annonce les demande.
+    # Faits facultatifs, cités seulement si l'annonce les demande. Une recherche à plusieurs
+    # a ses propres critères (« logement à partager »), pas ceux de la recherche solo.
     facultatifs = ""
-    if criteres := (loc.get("criteres_recherche") or "").strip():
+    criteres = ((profil.get("groupe") or {}).get("criteres_recherche")
+                or loc.get("criteres_recherche") or "").strip()
+    if criteres:
         facultatifs += f"- critères de recherche (seulement si l'annonce les demande) : {criteres} ;\n"
     if historique := (loc.get("historique_location") or "").strip():
         facultatifs += ("- logement actuel et passé (seulement si l'annonce le demande) : "
                         f"{historique} ;\n")
+    if groupe := profil.get("groupe"):
+        return _regles_message_groupe(profil, groupe, facultatifs, regle_taire)
     return f"""# Le message au bailleur
 Il doit sonner comme écrit par {loc['prenom']}, pas par une IA.
 
@@ -104,6 +121,84 @@ Un message qui saute une de ces questions est écarté sans être lu. Donc :
 {exemple}"""
 
 
+def _faits_amis(groupe: dict) -> str:
+    """Faits sur les amis, seulement ceux renseignés dans le profil (rien n'est inventé)."""
+    lignes = []
+    for ami in groupe.get("amis") or []:
+        prenom = (ami.get("prenom") or "").strip()
+        morceaux = [(ami.get(k) or "").strip() for k in ("situation", "emploi")]
+        if not prenom or not any(morceaux):
+            continue
+        garants = (ami.get("garants") or "").strip()
+        lignes.append(f"- {prenom} : " + " ; ".join(m for m in morceaux if m)
+                      + (f" ; garants : {garants} ;" if garants else
+                         f" ; garants inconnus : n'en dis rien et mets « garants de {prenom} » dans "
+                         "`a_completer` ;"))
+    if not lignes:
+        return ("- la situation de ses amis n'est pas encore renseignée : n'en dis rien au-delà de la "
+                "présentation du groupe, et mets « situation et dossier de mes amis » dans "
+                "`a_completer` ;\n")
+    return "\n".join(lignes) + "\n"
+
+
+def _regles_message_groupe(profil: dict, groupe: dict, facultatifs: str, regle_taire: str) -> str:
+    """Consignes du premier message pour une recherche à plusieurs (coloc entre amis).
+
+    Même exigence que le message solo (complet dès le premier envoi), mais au nom du groupe :
+    présentation commune, puis la situation de l'auteur, puis celle des amis quand elle est connue.
+    """
+    loc = profil["locataire"]
+    p = loc["prenom"]
+    return f"""# Le message au bailleur (recherche à plusieurs)
+{p} écrit au nom d'un petit groupe d'amis qui cherche à louer ensemble. Le message doit sonner
+comme écrit par {p}, pas par une IA. Le bailleur trie des centaines de demandes sans poser de
+questions : le message est complet, mais reste concis.
+
+## D'abord : ce que l'annonce exige (`exigences_annonce`)
+Relève chaque exigence de l'annonce (questions, garantie exigée, pièces, contraintes de contact
+ou de visite) dans `exigences_annonce`, puis réponds à CHACUNE dans le message avec les faits
+ci-dessous. Ce que les faits ne couvrent pas (situation des amis, Visale) va dans `a_completer` :
+n'invente rien, ne prétends pas remplir une condition.
+
+## Les faits (la seule matière autorisée)
+- le groupe : {groupe.get('presentation', '').strip()} ;
+- taille du groupe selon le logement : autant de personnes que de chambres pour le groupe,
+  {p} compris ; les amis sont pris dans l'ordre de la liste ci-dessous (2 chambres = {p} et le
+  premier, 3 = {p} et les deux premiers). Ne cite que les amis du groupe retenu, par leur
+  prénom. S'il manque des amis dans la liste pour remplir les chambres, écris « un autre ami »
+  et mets « situation du dernier ami » dans `a_completer` ;
+- arrivée souhaitée : {loc['arrivee']} ;
+- {p}, {loc['age']} ans, {loc['situation']} ; {loc['emploi']} ;
+- garanties de {p} : {loc['garanties']} ;
+{facultatifs}{_faits_amis(groupe)}- demander si le logement est toujours disponible et proposer une visite.
+
+## Règles
+- N'invente JAMAIS un fait absent de cette liste (revenus, garants ou dossier des amis, Visale).
+- Ne reprends PAS les détails de l'annonce (nom de rue, équipements, formules de l'annonceur).
+{regle_taire}- Mise en forme aérée, une ligne vide entre chaque bloc : « Bonjour, », le groupe, la situation
+  de {p} (revenus, garanties), celle des amis si elle est connue, la question et la visite,
+  puis « Bonne journée, » et « {p} » sur la ligne suivante.
+- Vouvoiement, phrases courtes, « nous » pour le groupe et « je » pour {p}. Jamais de tiret
+  cadratin, aucune formule creuse ni flatterie.
+
+Exemple de structure (à adapter, pas à recopier mot pour mot) :
+Bonjour,
+
+Nous sommes deux amis, [prénom de l'ami] et moi, à la recherche d'un logement à partager.
+[Présentation du groupe.]
+
+Pour ma part, [situation et emploi de {p}, revenus].
+
+[Garanties de {p}.]
+
+[Une phrase par ami du groupe : sa situation et ses revenus.]
+
+Le logement est-il toujours disponible ? Nous serions ravis de le visiter.
+
+Bonne journée,
+{p}"""
+
+
 def _systeme(profil: dict) -> str:
     """Prompt système stable (mis en cache) : le profil et les critères du locataire."""
     r = profil["recherche"]
@@ -119,7 +214,7 @@ chacun de ses critères et tu rédiges le premier message à envoyer.
 # Contexte
 - Lieu de travail : {r['bureaux']['nom']}, {r['bureaux']['adresse']}, arrivée {r['bureaux']['arrivee']}.
 - Le trajet a déjà été vérifié (seul critère éliminatoire) ; le calcul est fourni avec l'annonce.
-- Budget : {r['budget_max_cc']} € charges comprises. Entrée souhaitée : {r['entree_souhaitee']}.
+- {_ligne_budget(profil)} Entrée souhaitée : {r['entree_souhaitee']}.
 
 # Ce que cherche {prenom}
 {profil['preferences']}
@@ -150,6 +245,19 @@ citée dans la description et renseigne `station_citee`.
 {_regles_message(profil)}"""
 
 
+def _ligne_budget(profil: dict) -> str:
+    """Budget lisible pour Claude : plafond simple, ou selon le nombre de chambres (groupe)."""
+    groupe = profil.get("groupe")
+    if not groupe:
+        return f"Budget : {profil['recherche']['budget_max_cc']} € charges comprises."
+    paliers = ", ".join(f"{k} chambres : {float(v):.0f} €"
+                        for k, v in sorted(groupe["budget_par_chambres"].items(), key=lambda kv: int(kv[0])))
+    return (f"Recherche à plusieurs : le budget est le loyer TOTAL charges comprises pour le groupe, "
+            f"pas le prix par chambre ({paliers} ; au-delà, le plus haut palier). Il faut au moins "
+            f"{groupe.get('chambres_min', 2)} chambres pour le groupe : renseigne "
+            f"`chambres_pour_le_groupe` et `loyer_total_groupe_cc`, le code applique la règle.")
+
+
 def _contenu(annonce, trajet, vendeur: dict | None = None) -> str:
     """Message utilisateur : l'annonce, son trajet et le profil du vendeur, en JSON lisible."""
     donnees = annonce.to_dict()
@@ -170,6 +278,7 @@ def juger(annonce, trajet, profil: dict, environs: dict | None = None,
         >>> verdict, score, lignes, usage = juger(annonce, trajet, profil, environs)
     """
     client = client or anthropic.Anthropic()
+    groupe = profil.get("groupe")
     reponse = client.messages.parse(
         model=MODELE,
         max_tokens=4000,
@@ -177,10 +286,13 @@ def juger(annonce, trajet, profil: dict, environs: dict | None = None,
                  "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": _contenu(annonce, trajet, (environs or {}).get("vendeur"))}],
         output_config={"effort": "medium"},
-        output_format=Verdict,
+        output_format=VerdictGroupe if groupe else Verdict,
     )
     verdict = reponse.parsed_output
     evaluations = {e.id: (e.verdict, e.preuve) for e in verdict.evaluations}
+    if groupe:
+        environs = {**(environs or {}), "chambres_groupe": verdict.chambres_pour_le_groupe,
+                    "loyer_groupe_cc": verdict.loyer_total_groupe_cc}
     score, lignes = scoring.calculer(profil.get("criteres", []), evaluations,
                                      annonce, trajet, environs)
     if not verdict.est_une_offre:
@@ -192,7 +304,31 @@ def juger(annonce, trajet, profil: dict, environs: dict | None = None,
     if verdict.duree_max_mois is not None and verdict.duree_max_mois < duree_min:
         score = 0
         verdict.alertes.insert(0, f"Courte durée : {verdict.duree_max_mois:g} mois max, éliminée")
+    if groupe and (raison := ecart_groupe(verdict, groupe)):
+        score = 0
+        verdict.alertes.insert(0, raison)
     return verdict, score, lignes, reponse.usage
+
+
+def ecart_groupe(verdict, groupe: dict) -> str | None:
+    """Règles de la coloc entre amis : assez de chambres, loyer total sous le plafond.
+
+    Un nombre de chambres ou un loyer inconnu laisse passer (dans le doute, on notifie).
+
+    Exemple :
+        >>> ecart_groupe(v, {"chambres_min": 2, "budget_par_chambres": {2: 2000, 3: 3000}})
+        'Loyer pour le groupe : 2 300 € pour 2 chambres (plafond 2 000 €), éliminée'
+    """
+    chambres, total = verdict.chambres_pour_le_groupe, verdict.loyer_total_groupe_cc
+    if chambres is None:
+        return None
+    if chambres < groupe.get("chambres_min", 2):
+        return f"Seulement {chambres} chambre(s) pour le groupe, éliminée"
+    plafond = recherches.plafond_groupe(chambres, groupe)
+    if total and plafond and total > plafond:
+        euros = lambda x: f"{x:,.0f}".replace(",", " ")
+        return f"Loyer pour le groupe : {euros(total)} € pour {chambres} chambres (plafond {euros(plafond)} €), éliminée"
+    return None
 
 
 # Tarifs Sonnet 5 en $ par million de tokens (entrée, sortie) ; cache : lecture ×0,1, écriture ×1,25.

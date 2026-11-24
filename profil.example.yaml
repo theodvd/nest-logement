@@ -15,11 +15,14 @@ recherche:
   trajet_max_min: 40          # SEUL critère éliminatoire, porte à porte
   marge_position_floue_min: 8 # tolérance quand l'annonce ne donne que le centre de la commune
   budget_max_cc: 900          # charges comprises
-  types: [studio_t1, colocation]   # studio_t1 et/ou colocation ; ordre = priorité
+  types: [studio_t1, colocation]   # studio_t1 (logement entier, quel que soit le nombre de pièces)
+                                   # et/ou colocation ; ordre = priorité
   entree_souhaitee: "janvier 2027"
   rayon_recherche_km: 15      # zone interrogée sur les sites, avant calcul du vrai trajet
   distance_max_vol_oiseau_km: 12   # pré-filtre gratuit avant d'appeler Google
   poids_minute_marche: 1      # 1 = neutre ; 0.67 si 30 min à pied valent 20 min de métro pour toi
+  poids_minute_rer: 1         # 1 = neutre ; 1.25 si tu détestes le RER : une minute à bord d'un RER
+                              # ou Transilien compte 1,25, y compris pour trajet_max_min
   marche_max_km: 3.6          # au-delà, la marche ne peut pas gagner : pas d'appel Google
   moto: false                 # true : trajet moto calculé quand l'annonce mentionne un parking
   dispo_au_plus_tot: "2026-12"     # dispo explicite avant ce mois = pas jugée (sans date = jugée)
@@ -97,11 +100,11 @@ criteres:
     auto: surface_m2
     paliers: {9: 0, 14: 0.5, 20: 0.9, 25: 1}
   - id: studio
-    libelle: Studio ou T1
+    libelle: Logement pour elle seule
     famille: logement
     poids: 3
-    pourquoi: "La colocation reste possible, mais en second choix."
-    consigne: "oui si studio ou T1 pour une personne seule ; non si chambre en colocation."
+    pourquoi: "La colocation reste possible, mais en second choix. Le nombre de pièces ne compte pas."
+    consigne: "oui si logement entier pour une personne seule, quel que soit le nombre de pièces (studio, T1, T2…) ; non si chambre en colocation."
   - id: meuble
     libelle: Meublé
     famille: logement
@@ -178,6 +181,56 @@ criteres:
     applique_a: [colocation]
     consigne: "oui si règles de vie, planning ménage, ménage inclus (coliving) ; non si signaux de désordre ; inconnu sinon."
 
+# Autres recherches (facultatif) : chacune reprend TOUT ce profil (lieu de travail, trajet,
+# préférences, critères, message) et ne remplace que ce qu'elle redéfinit. Les annonces sont
+# suivies à part : un T3 écarté ci-dessus pour son loyer reste jugé ici. Chaque recherche en
+# plus augmente le nombre d'annonces jugées, donc le coût Claude. Code : nest/recherches.py.
+# Exemple : chercher aussi une colocation entre amis. Décommente et adapte.
+# autres_recherches:
+#   - id: coloc_amis
+#     nom: Coloc entre amis
+#     prefixe: "👥"             # en tête du titre des notifs, même canal ntfy
+#     recherche:
+#       # grand_logement = logement entier d'au moins `pieces_min` pièces ; colocation = chambres
+#       # libres dans une coloc existante (au moins 2, jugé par Claude).
+#       types: [grand_logement, colocation]
+#       pieces_min: 3             # un T3 = 3 pièces = en général 2 chambres et un séjour
+#       budget_max_cc: 2400       # plafond large lu sur les sites ; la vraie règle est dans `groupe`
+#     groupe:
+#       chambres_min: 2
+#       # Loyer TOTAL charges comprises pour le groupe, selon le nombre de chambres.
+#       budget_par_chambres: {2: 1600, 3: 2400}
+#       # Présentation commune, reprise dans le message au bailleur.
+#       presentation: "nous sommes amis, de la même promo ; nous commençons tous un stage à Paris en janvier"
+#       # Remplace locataire.criteres_recherche (cité seulement si l'annonce le demande).
+#       criteres_recherche: "nous cherchons un logement à partager, proche de nos lieux de stage"
+#       # Un ami par entrée, dans l'ordre de priorité (2 chambres = toi et le premier, 3 = toi et
+#       # les deux premiers). Un champ vide n'est jamais cité : il remonte en « ✍️ À compléter ».
+#       amis:
+#         - prenom: Léa
+#           situation: "en stage de fin d'études à Paris, avec une gratification de 1 300 € par mois"
+#           emploi: ""
+#           garants: "garantie Visale"
+#     preferences_en_plus: |
+#       Recherche à plusieurs : un logement entier d'au moins deux chambres, ou une colocation
+#       existante où au moins deux chambres sont libres. Le budget est le loyer total du groupe.
+#     # Critères pensés pour une personne seule, remplacés ici.
+#     criteres_retires: [studio, surface, loyer]
+#     criteres_en_plus:
+#       - id: loyer_par_chambre
+#         libelle: Loyer par chambre
+#         famille: budget
+#         poids: 4
+#         pourquoi: "Plafond 800 € par chambre."
+#         auto: loyer_par_chambre
+#         paliers: {550: 1, 800: 0.2}
+#       - id: chambres_correctes
+#         libelle: Vraies chambres
+#         famille: logement
+#         poids: 4
+#         pourquoi: "Chacun doit avoir une vraie chambre."
+#         consigne: "oui si chaque chambre du groupe est une vraie chambre fermée de taille correcte (environ 9 m² ou plus) ; non si l'une d'elles est un bureau, une alcôve, une mezzanine ou un séjour ; inconnu sinon."
+
 # Marques ou plateformes vers lesquelles des escrocs redirigent : toute annonce qui les cite est écartée.
 arnaques:
   marques: []
@@ -186,6 +239,37 @@ notif:
   score_min: 70               # sous ce score (sur 100), pas de notif
   max_jugements_par_passage: 15   # garde-fou de coût Claude
   page_ecrire: null           # URL de ta page pont « copier et écrire » (voir ecrire/), sinon null
+
+# Relances (facultatif, nest/relances.py). Il faut la page pont (notif.page_ecrire) : toucher
+# « Copier et écrire » vaut envoi. Sans réponse du bailleur, nest propose une relance prête à
+# coller. Une réponse n'est reconnue que par le mail de Leboncoin (« Nouveau message pour… ») :
+# il faut donc aussi le tri Gmail. L'envoi reste manuel. Seule la recherche principale est relancée.
+# Variables : {bien} (studio, appartement, chambre ou logement), {prenom}.
+relances:
+  actif: true
+  delai_h: 24                 # sans réponse depuis 24 h après le dernier message
+  max: 2                      # au plus deux relances par annonce
+  heures: [9, 21]             # notifs de relance seulement entre 9 h et 21 h
+  abandon_jours: 7            # au-delà d'une semaine sans réponse, on laisse tomber
+  messages:
+    - |
+      Bonjour,
+
+      Je reviens vers vous au sujet de votre {bien} : j'arrive en janvier pour un stage de six mois, avec la garantie Visale.
+
+      Le logement est-il toujours disponible ?
+
+      Bonne journée,
+      {prenom}
+    - |
+      Bonjour,
+
+      Je me permets de vous relancer une dernière fois pour votre {bien}. Je peux visiter quand cela vous arrange.
+
+      Le logement est-il toujours disponible ?
+
+      Bonne journée,
+      {prenom}
 
 # Tri des mails d'agence (facultatif, seulement si Gmail est autorisé). Lecture seule.
 mails:
