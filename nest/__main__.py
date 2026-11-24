@@ -27,7 +27,7 @@ from pathlib import Path
 import requests
 import yaml
 
-from nest import doublons, environs as module_environs, jugement, notif, notion, recherches, relances, trajet as module_trajet, vendeurs
+from nest import claude, doublons, environs as module_environs, jugement, notif, notion, recherches, relances, trajet as module_trajet, vendeurs
 from nest.annonce import Annonce
 from nest.base import Base, filtre_recherche
 from nest.filtres import raison_ecart
@@ -90,7 +90,9 @@ CLES = {
 
 def verifier_cles(a_blanc: bool = False, notif_seule: bool = False) -> None:
     """Lève ConfigIncomplete si une clé indispensable manque ; prévient pour les autres."""
-    requises = ["NTFY_TOPIC"] if notif_seule else ["ANTHROPIC_API_KEY"] + ([] if a_blanc else ["NTFY_TOPIC"])
+    # En mode abonnement (NEST_CLAUDE=abonnement), Claude Code remplace la clé API.
+    cle_claude = [] if claude.mode() == "abonnement" else ["ANTHROPIC_API_KEY"]
+    requises = ["NTFY_TOPIC"] if notif_seule else cle_claude + ([] if a_blanc else ["NTFY_TOPIC"])
     erreurs = []
     for cle in requises:
         valeur = os.getenv(cle, "")
@@ -100,6 +102,14 @@ def verifier_cles(a_blanc: bool = False, notif_seule: bool = False) -> None:
         elif valeur.startswith("op://"):
             erreurs.append(f"{cle} est une référence 1Password non résolue : lance la commande avec "
                            "op run --env-file=.env -- …")
+    if not notif_seule and claude.mode() == "abonnement":
+        if not claude.binaire():
+            erreurs.append("Mode abonnement : Claude Code introuvable. Installe-le, ou mets son chemin "
+                           "dans NEST_CLAUDE_BIN.")
+        if not os.getenv("CLAUDE_CODE_OAUTH_TOKEN"):
+            log.warning("Mode abonnement sans CLAUDE_CODE_OAUTH_TOKEN : la tâche planifiée échouera quand "
+                        "la connexion de Claude Code expirera. Lance `claude setup-token` et mets le "
+                        "jeton dans .env.")
     if erreurs:
         raise ConfigIncomplete("\n".join(erreurs))
     if not notif_seule and not os.getenv("GOOGLE_MAPS_API_KEY"):
@@ -116,7 +126,18 @@ def verifier(profil: dict) -> bool:
 
     print(f"Profil : {profil['locataire']['prenom']}, {profil['recherche']['ville']}, "
           f"{len(profil.get('criteres', []))} critères, seuil {profil['notif']['score_min']}")
-    if not os.getenv("ANTHROPIC_API_KEY"):
+    if claude.mode() == "abonnement":
+        try:
+            claude.parse(modele=jugement.MODELE, systeme="Réponds au format demandé.",
+                         contenu="Réponds ok.", schema=claude.Essai, effort="low")
+            ligne("✓", f"Claude : abonnement via Claude Code ({claude.binaire()}), modèle {jugement.MODELE}")
+        except claude.ErreurClaude as err:
+            ligne("✗", f"Claude (abonnement) : {err}")
+            ok = False
+        if not os.getenv("CLAUDE_CODE_OAUTH_TOKEN"):
+            ligne("!", "CLAUDE_CODE_OAUTH_TOKEN absent : lance `claude setup-token` et mets le jeton "
+                       "dans .env, sinon la tâche planifiée s'arrêtera à l'expiration de la connexion")
+    elif not os.getenv("ANTHROPIC_API_KEY"):
         ligne("✗", "ANTHROPIC_API_KEY absente")
         ok = False
     else:

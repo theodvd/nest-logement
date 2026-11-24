@@ -69,6 +69,7 @@ Keys you will be asked for:
 | Key | What for | Where |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Claude judges the listings | [console.anthropic.com](https://console.anthropic.com) (prepaid credit) |
+| or `CLAUDE_CODE_OAUTH_TOKEN` | Same, through your Claude Pro or Max subscription instead of the API (`NEST_CLAUDE=abonnement`) | `claude setup-token`; uses your Claude quota, about 3× the tokens of the API |
 | `GOOGLE_MAPS_API_KEY` | Real commute times | Google Cloud, enable "Routes API" (billing account required, usage stays in the free tier) |
 | `NTFY_TOPIC` | Push notifications | Any random secret name, then subscribe in the [ntfy](https://ntfy.sh) app |
 

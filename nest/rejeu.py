@@ -28,7 +28,7 @@ from pathlib import Path
 
 import anthropic
 
-from nest import environs as module_environs, jugement, trajet as module_trajet
+from nest import claude, environs as module_environs, jugement, trajet as module_trajet
 from nest.__main__ import charger_profil, seuil_trajet
 from nest.annonce import Annonce
 from nest.base import Base
@@ -137,7 +137,7 @@ def juger(profil: dict, maximum: int | None, workers: int) -> None:
     au_plus_tot = profil["recherche"].get("dispo_au_plus_tot")
     lignes.sort(key=lambda l: _priorite(json.loads(l[1]).get("disponible_le"), au_plus_tot))
     lignes = lignes[:maximum] if maximum else lignes
-    client = anthropic.Anthropic()
+    client = claude.client()
     log.info("%d candidates à juger (%d en parallèle)", len(lignes), workers)
 
     def tache(ligne):
@@ -152,7 +152,7 @@ def juger(profil: dict, maximum: int | None, workers: int) -> None:
         for i, f in enumerate(as_completed(futures), 1):
             try:
                 cle, verdict, score, detail, cout = f.result()
-            except anthropic.APIError as err:
+            except (anthropic.APIError, claude.ErreurClaude) as err:
                 log.warning("Jugement en échec, sera repris : %s", err)
                 continue
             total += cout
@@ -180,7 +180,7 @@ def messages(profil: dict, score_min: int, maximum: int | None, workers: int,
         "AND (? IS NULL OR json_extract(verdict, '$.message') LIKE '%' || ? || '%') ORDER BY score DESC",
         (score_min, contenant, contenant)).fetchall()
     lignes = lignes[:maximum] if maximum else lignes
-    client = anthropic.Anthropic()
+    client = claude.client()
     log.info("%d messages à régénérer", len(lignes))
 
     def tache(ligne):
@@ -193,7 +193,7 @@ def messages(profil: dict, score_min: int, maximum: int | None, workers: int,
         for f in as_completed([pool.submit(tache, l) for l in lignes]):
             try:
                 cle, verdict, message, cout = f.result()
-            except anthropic.APIError as err:
+            except (anthropic.APIError, claude.ErreurClaude) as err:
                 log.warning("Message en échec : %s", err)
                 continue
             total += cout

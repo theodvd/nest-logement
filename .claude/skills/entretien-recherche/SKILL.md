@@ -146,9 +146,16 @@ Règles du score (à expliquer s'il demande) :
 
 1. Si `.env` n'existe pas : `cp .env.example .env && chmod 600 .env`.
 2. Expliquer comment obtenir chaque clé, une à la fois :
-   - **Anthropic** (juge les annonces) : https://console.anthropic.com, créer un compte,
-     ajouter du crédit prépayé dans Billing (5 $ suffisent pour démarrer), puis
-     Settings → API keys → Create key.
+   - **Claude** (juge les annonces) : demander d'abord, par choix fermé, API ou abonnement.
+     - API (`NEST_CLAUDE=api`, recommandé si pas d'abonnement Claude) :
+       https://console.anthropic.com, créer un compte, ajouter du crédit prépayé dans
+       Billing (5 $ suffisent pour démarrer), puis Settings → API keys → Create key.
+     - Abonnement (`NEST_CLAUDE=abonnement`, s'il a Claude Pro ou Max) : pas de clé API.
+       Prévenir que chaque jugement entame son quota Claude (environ 3 fois plus de jetons
+       qu'en API) et prend 30 à 45 s. Lui faire lancer `claude setup-token` dans un
+       terminal (le préfixe `!` dans Claude Code suffit) et coller le jeton dans
+       `CLAUDE_CODE_OAUTH_TOKEN` : sans lui, la tâche planifiée s'arrête quand la
+       connexion expire.
    - **Google Routes** (vrais trajets) : https://console.cloud.google.com, créer un
      projet, lui associer un compte de facturation (exigé même dans le palier gratuit),
      activer « Routes API », puis Identifiants → Créer une clé API, et la restreindre à
