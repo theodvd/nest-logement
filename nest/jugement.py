@@ -12,7 +12,7 @@ from typing import Literal
 import anthropic
 from pydantic import BaseModel, Field
 
-from nest import recherches, scoring, trajet as module_trajet
+from nest import claude, recherches, scoring, trajet as module_trajet
 
 # Sonnet d'abord : on ne passera à un modèle plus gros que sur écart démontré.
 MODELE = "claude-sonnet-5"
@@ -277,18 +277,11 @@ def juger(annonce, trajet, profil: dict, environs: dict | None = None,
     Exemple :
         >>> verdict, score, lignes, usage = juger(annonce, trajet, profil, environs)
     """
-    client = client or anthropic.Anthropic()
     groupe = profil.get("groupe")
-    reponse = client.messages.parse(
-        model=MODELE,
-        max_tokens=4000,
-        system=[{"type": "text", "text": _systeme(profil),
-                 "cache_control": {"type": "ephemeral"}}],
-        messages=[{"role": "user", "content": _contenu(annonce, trajet, (environs or {}).get("vendeur"))}],
-        output_config={"effort": "medium"},
-        output_format=VerdictGroupe if groupe else Verdict,
-    )
-    verdict = reponse.parsed_output
+    verdict, usage = claude.parse(
+        modele=MODELE, systeme=_systeme(profil),
+        contenu=_contenu(annonce, trajet, (environs or {}).get("vendeur")),
+        schema=VerdictGroupe if groupe else Verdict, effort="medium", max_tokens=4000, client=client)
     evaluations = {e.id: (e.verdict, e.preuve) for e in verdict.evaluations}
     if groupe:
         environs = {**(environs or {}), "chambres_groupe": verdict.chambres_pour_le_groupe,
@@ -307,7 +300,7 @@ def juger(annonce, trajet, profil: dict, environs: dict | None = None,
     if groupe and (raison := ecart_groupe(verdict, groupe)):
         score = 0
         verdict.alertes.insert(0, raison)
-    return verdict, score, lignes, reponse.usage
+    return verdict, score, lignes, usage
 
 
 def ecart_groupe(verdict, groupe: dict) -> str | None:
@@ -357,17 +350,11 @@ def rediger(annonce, profil: dict, client: anthropic.Anthropic | None = None):
     Exemple :
         >>> message, usage = rediger(annonce, profil)
     """
-    client = client or anthropic.Anthropic()
     donnees = {k: v for k, v in annonce.to_dict().items() if k in ("titre", "description", "type_bien", "disponible_le")}
-    reponse = client.messages.parse(
-        model=MODELE,
-        max_tokens=2000,
-        system=[{"type": "text", "cache_control": {"type": "ephemeral"},
-                 "text": f"Tu rédiges le premier message de {profil['locataire']['prenom']} "
-                         "à un bailleur.\n\n"
-                         + _regles_message(profil)}],
-        messages=[{"role": "user", "content": "Annonce :\n" + json.dumps(donnees, ensure_ascii=False, indent=2)}],
-        output_config={"effort": "low"},
-        output_format=Message,
-    )
-    return reponse.parsed_output.message, reponse.usage
+    resultat, usage = claude.parse(
+        modele=MODELE,
+        systeme=f"Tu rédiges le premier message de {profil['locataire']['prenom']} à un bailleur.\n\n"
+                + _regles_message(profil),
+        contenu="Annonce :\n" + json.dumps(donnees, ensure_ascii=False, indent=2),
+        schema=Message, effort="low", max_tokens=2000, client=client)
+    return resultat.message, usage

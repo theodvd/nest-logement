@@ -21,6 +21,7 @@ from urllib.parse import parse_qs, urlparse
 import anthropic
 from pydantic import BaseModel, Field
 
+from nest import claude
 from nest.jugement import MODELE
 
 Categorie = Literal["demande_dossier", "proposition_visite", "question", "refus",
@@ -158,16 +159,8 @@ def classer(mail, profil: dict, client: anthropic.Anthropic | None = None):
         >>> classement, usage = classer(mail, profil)
         >>> classement.categorie, classement.risque_arnaque
     """
-    client = client or anthropic.Anthropic()
-    reponse = client.messages.parse(
-        model=MODELE,
-        max_tokens=2000,
-        system=[{"type": "text", "text": systeme(profil), "cache_control": {"type": "ephemeral"}}],
-        messages=[{"role": "user", "content": _contenu(mail)}],
-        output_config={"effort": "low"},
-        output_format=Classement,
-    )
-    return reponse.parsed_output, reponse.usage
+    return claude.parse(modele=MODELE, systeme=systeme(profil), contenu=_contenu(mail),
+                        schema=Classement, effort="low", max_tokens=2000, client=client)
 
 
 def _parametres_decodes(lien: str) -> list[str]:
