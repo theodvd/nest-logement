@@ -15,14 +15,13 @@ from nest.annonce import Annonce
 
 log = logging.getLogger(__name__)
 
-# Profils de navigateur imités face à DataDome. lbc 1.1.8 en tire un au hasard parmi 9,
-# mais safari270_ios et firefox154 n'existent pas dans curl_cffi 0.16 : le passage plantait
-# avant même d'appeler Leboncoin, soit l'essentiel des échecs (148 sur 157, constat du 10/11).
-# On impose donc un tirage parmi les 7 profils testés un par un.
-PROFILS_NAVIGATEUR = [
-    "firefox133", "firefox135", "firefox144", "firefox147",
-    "tor145", "safari_ios", "safari_ios_beta",
-]
+# Profils de navigateur imités face à DataDome. Banc du 25/11/2026 (une requête par profil,
+# sans relance, curl_cffi 0.16.3 et lbc 1.1.8) : sur 38 profils, seul tor145 passe (puis 3 fois
+# sur 3 en confirmation) ; tous les Chrome, Edge, Safari et Firefox sont bloqués dès la
+# première requête, y compris depuis une connexion neuve. L'ancienne liste de 7 profils ne
+# passait qu'un passage sur sept environ. Si tor145 tombe à son tour, refaire le banc :
+# un seul profil restant, c'est un sursis, pas une solution durable.
+PROFILS_NAVIGATEUR = ["tor145"]
 
 
 def nouveau_client() -> lbc.Client:
