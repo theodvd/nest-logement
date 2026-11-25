@@ -26,8 +26,14 @@ PROFILS_NAVIGATEUR = [
 
 
 def nouveau_client() -> lbc.Client:
-    """Client lbc avec un profil de navigateur tiré parmi ceux que curl_cffi sait imiter."""
-    return lbc.Client(impersonate=random.choice(PROFILS_NAVIGATEUR))
+    """Client lbc avec un profil de navigateur tiré parmi ceux que curl_cffi sait imiter.
+
+    Aucune relance : sur un refus DataDome (403), lbc recrée sa session et réessaie
+    aussitôt, 5 fois par défaut, soit 6 requêtes en quelques secondes, ce qui aggrave le
+    marquage (constaté le 25/11 sur une installation neuve). nest réessaie de lui-même
+    au passage suivant, avec un autre profil tiré au hasard.
+    """
+    return lbc.Client(impersonate=random.choice(PROFILS_NAVIGATEUR), max_retries=0)
 
 # Codes Leboncoin du champ "real_estate_type" : 1 = maison, 2 = appartement.
 # Exclut parkings, caves, terrains qui polluent la catégorie "Locations".

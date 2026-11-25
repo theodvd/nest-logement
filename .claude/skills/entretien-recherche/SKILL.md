@@ -164,9 +164,17 @@ Règles du score (à expliquer s'il demande) :
      `python3 -c "import secrets; print('nest-' + secrets.token_hex(8))"`, installer
      l'app ntfy (iOS ou Android) et s'abonner à ce canal. Le nom fait office de mot de
      passe : il reste secret.
-   - Facultatif, **Gens de Confiance** : rappeler le risque pour son compte, puis :
-     se connecter sur gensdeconfiance.com, outils de développement → Réseau → une
-     requête vers le site → copier l'en-tête `Cookie` entier, entre guillemets.
+   - Facultatif, **Gens de Confiance** : rappeler le risque pour son compte, puis guider
+     pas à pas (dans Chrome ; l'onglet Console ne sert à rien ici, c'est le piège fréquent) :
+     1. se connecter sur gensdeconfiance.com et rester sur une page du site ;
+     2. ouvrir les outils de développement (Cmd + Option + I sur Mac, F12 sous Linux) ;
+     3. onglet **Réseau** (Network), puis recharger la page (Cmd + R) ;
+     4. cliquer sur le filtre **Doc**, puis sur la première ligne de la liste ;
+     5. dans **En-têtes** (Headers), section **En-têtes de requête** (Request Headers),
+        trouver la ligne `cookie`, clic droit → **Copier la valeur** ;
+     6. la coller dans `.env` après `GDC_COOKIE=`, entre guillemets doubles.
+     Le cookie expire au bout de quelques semaines : nest envoie alors une notif « cookie
+     à renouveler », et il suffit de refaire ces étapes.
    - Facultatif, **Gmail** et **Notion** : renvoyer aux docstrings de
      `nest/mails/gmail.py` et `nest/notion.py` ; proposer de passer, ça s'ajoute plus tard.
 3. Recommander que l'utilisateur colle lui-même ses clés dans `.env` (macOS :
